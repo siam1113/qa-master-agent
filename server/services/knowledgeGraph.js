@@ -86,7 +86,8 @@ export class KnowledgeGraphService {
 
   ingestImage(image, options = {}) {
     const imageId = image.id || `screen-${uuid()}`;
-    this.upsertNode({ id: imageId, label: image.title || 'Untitled UI image', type: 'Screen', content: image.alt || 'UI capture', src: image.src, source: options.fixture ? 'fixture' : 'ingested', tags: ['perception-memory'], embedding: vectorPipeline.embed(`${image.title || ''} ${image.alt || ''}`) });
+    const content = image.summary || image.alt || 'UI capture';
+    this.upsertNode({ id: imageId, label: image.title || 'Untitled UI image', type: 'Screen', content, src: image.src, source: options.fixture ? 'fixture' : 'ingested', tags: ['perception-memory'], mindmap: image.mindmap || null, embedding: vectorPipeline.embed(`${image.title || ''} ${content}`) });
     (image.features || []).forEach((feature) => {
       const featureId = this.slugNode('feature', feature);
       this.upsertNode({ id: featureId, label: feature, type: 'Feature', content: `Capability: ${feature}` });
@@ -124,13 +125,88 @@ export class KnowledgeGraphService {
     return this.getState();
   }
 
-  enhanceKnowledge({ title, content, imageAlt, imageSrc, businessRule }) {
-    const features = this.extractFeatures(content);
-    this.ingestDocument({ title, content, features }, { sourceType: 'document' });
-    if (imageAlt?.trim() || imageSrc?.trim()) this.ingestImage({ title: `${title} UI note`, alt: imageAlt || 'Pasted UI capture', src: imageSrc, features });
+  async enhanceKnowledge({ title, content = '', imageAlt = '', imageSrc = '', businessRule }) {
+    const hasImage = Boolean(imageSrc?.trim() || imageAlt?.trim());
+    const imageAnalysis = hasImage ? await this.analyzeImageCapture({ title, imageAlt, imageSrc, context: content }) : null;
+    const documentContent = [content, imageAnalysis?.documentText].filter(Boolean).join('\n\n');
+    const features = [...new Set([
+      ...this.extractFeatures(documentContent || imageAlt || title),
+      ...(imageAnalysis?.features || [])
+    ])].slice(0, 8);
+
+    this.ingestDocument({ title, content: documentContent || `Visual onboarding memory for ${title}.`, features }, { sourceType: hasImage ? 'visual_onboarding' : 'document' });
+    if (hasImage) this.ingestImage({ title: `${title} UI mindmap`, alt: imageAlt || imageAnalysis?.summary || 'Pasted UI capture', src: imageSrc, features, summary: imageAnalysis?.summary, mindmap: imageAnalysis?.mindmap });
     if (businessRule?.trim()) this.ingestRule({ name: `${title} rule`, description: businessRule, validations: this.extractFeatures(businessRule), confidence: 0.66 });
-    this.log('enhance', `Enhance pipeline parsed "${title}", generated embeddings, and refreshed graph lineage.`);
+    this.log('enhance', `Enhance pipeline parsed "${title}", generated readable memory nodes, and refreshed graph lineage.`, { visualParsing: hasImage, llmProvider: imageAnalysis?.provider });
     return this.getState();
+  }
+
+  async analyzeImageCapture({ title, imageAlt = '', imageSrc = '', context = '' }) {
+    const fallback = this.buildImageMindmap({ title, imageAlt, context });
+    if (!this.isLikelyImageDataUrl(imageSrc)) return fallback;
+
+    const system = 'You turn UI screenshots into user-readable QA memory. Return strict JSON only.';
+    const prompt = `Analyze this pasted application screenshot for QA onboarding. Context: ${context || 'none'}. User notes: ${imageAlt || 'none'}. Return JSON with keys summary, features, and mindmap. mindmap must have label, description, and children arrays. Keep it concise and readable.`;
+    let llm;
+    try {
+      llm = await llmProvider.completeVision({ system, prompt, imageSrc, metadata: { feature: 'image-ingestion', title } });
+    } catch (error) {
+      this.log('llm.vision.fallback', `Image parsing fell back to notes because LLM vision failed: ${error.message}`);
+      return fallback;
+    }
+    if (!llm.content) return { ...fallback, provider: llm.provider };
+
+    const parsed = this.parseJsonObject(llm.content);
+    if (!parsed) return { ...fallback, provider: llm.provider };
+    const mindmap = parsed.mindmap?.label ? parsed.mindmap : fallback.mindmap;
+    const summary = parsed.summary || fallback.summary;
+    const features = Array.isArray(parsed.features) ? parsed.features.filter(Boolean).slice(0, 8) : fallback.features;
+    return { provider: llm.provider, summary, features, mindmap, documentText: this.mindmapToDocument(summary, mindmap) };
+  }
+
+  isLikelyImageDataUrl(imageSrc = '') {
+    const match = imageSrc.match(/^data:image\/[a-z0-9.+-]+;base64,([a-z0-9+/=]+)$/i);
+    return Boolean(match && match[1].length > 100);
+  }
+
+  buildImageMindmap({ title, imageAlt = '', context = '' }) {
+    const features = this.extractFeatures(`${imageAlt} ${context}`).slice(0, 6);
+    const summary = imageAlt || `Pasted UI capture for ${title}. Add notes to improve visual parsing.`;
+    const mindmap = {
+      label: title,
+      description: summary,
+      children: [
+        { label: 'Visible UI', description: summary, children: features.slice(0, 3).map((feature) => ({ label: feature, description: `Potential UI capability or state: ${feature}.` })) },
+        { label: 'QA focus', description: 'Validate key controls, visible state, and workflow expectations from this screen.', children: features.slice(3, 6).map((feature) => ({ label: feature, description: `Check expected behavior for ${feature}.` })) }
+      ]
+    };
+    return { provider: 'extractive', summary, features, mindmap, documentText: this.mindmapToDocument(summary, mindmap) };
+  }
+
+  mindmapToDocument(summary, mindmap) {
+    const lines = [summary];
+    const walk = (node, depth = 0) => {
+      if (!node) return;
+      lines.push(`${'  '.repeat(depth)}- ${node.label}: ${node.description || ''}`.trim());
+      (node.children || []).forEach((child) => walk(child, depth + 1));
+    };
+    walk(mindmap);
+    return lines.join('\n');
+  }
+
+  parseJsonObject(content = '') {
+    const trimmed = content.trim().replace(/^```json/i, '').replace(/^```/, '').replace(/```$/, '').trim();
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      const match = trimmed.match(/\{[\s\S]*\}/);
+      if (!match) return null;
+      try {
+        return JSON.parse(match[0]);
+      } catch {
+        return null;
+      }
+    }
   }
 
   deleteMemory() {

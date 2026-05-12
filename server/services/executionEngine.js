@@ -100,10 +100,13 @@ export class ExecutionEngine extends EventEmitter {
     }))).catch(() => []);
     const domResult = await toolRegistry.execute('dom.extract', { note: JSON.stringify(domSummary) }, { sessionId, scope: 'browser' });
     const screenshotBuffer = await page.screenshot({ fullPage: true, type: 'png' });
-    screenshots.push({ id: uuid(), timestamp: new Date().toISOString(), src: `data:image/png;base64,${screenshotBuffer.toString('base64')}`, label: `${browserName} frame (${label}): ${title || url}` });
+    const frame = { id: uuid(), timestamp: new Date().toISOString(), src: `data:image/png;base64,${screenshotBuffer.toString('base64')}`, label: `${browserName} frame (${label}): ${title || url}`, url, title, stepLabel: label };
+    screenshots.push(frame);
+    this.emit('session', { type: 'browser.frame', sessionId, frame });
     domSnapshots.push({ id: uuid(), timestamp: new Date().toISOString(), url, title, interactiveElements: domSummary });
     observations.push({ category: 'browser', message: `Captured ${label} at ${url} with title "${title || 'untitled'}".`, metadata: { browserName } });
     observations.push({ category: 'perception', message: `Extracted ${domResult.regions.length} interactive DOM region(s) for command: ${command}.`, metadata: { regions: domResult.regions, visibleTextChars: accessibility.length } });
+    this.emit('session', { type: 'browser.dom', sessionId, message: `Detected ${domResult.regions.length} interactive regions at ${url}.`, regions: domResult.regions });
     return domSummary;
   }
 
