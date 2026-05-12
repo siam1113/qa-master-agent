@@ -38,6 +38,21 @@ export class AgentRegistry {
     return [...this.profiles.values()];
   }
 
+  add(profile = {}) {
+    const name = String(profile.name || '').trim();
+    if (!name) throw new Error('Agent name is required.');
+    const id = String(profile.id || `agent-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')}`).trim();
+    const normalized = {
+      id,
+      name,
+      scope: String(profile.scope || 'qa').trim() || 'qa',
+      strategy: String(profile.strategy || 'User-defined QA strategy').trim() || 'User-defined QA strategy',
+      tools: Array.isArray(profile.tools) && profile.tools.length ? profile.tools.map(String) : ['dom.extract', 'mcp.registry.describe']
+    };
+    this.profiles.set(id, normalized);
+    return normalized;
+  }
+
   get(agentId = 'agent-exploratory-qa') {
     return this.profiles.get(agentId) || this.profiles.get('agent-exploratory-qa');
   }

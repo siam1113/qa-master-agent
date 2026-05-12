@@ -1,8 +1,8 @@
 import { EventEmitter } from 'node:events';
 import { randomUUID as uuid } from 'node:crypto';
+import { env } from '../config/env.js';
 import { agentRegistry } from './agentRegistry.js';
 import { toolRegistry } from './toolRegistry.js';
-import { env } from '../config/env.js';
 
 async function loadPlaywright() {
   return import('playwright');
@@ -52,31 +52,78 @@ export class ExecutionEngine extends EventEmitter {
     const screenshots = [];
     const domSnapshots = [];
     const failures = [];
+    const performedActions = [];
+    let finalUrl = targetUrl;
     try {
-      const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, ignoreHTTPSErrors: true, recordVideo: process.env.RECORD_VIDEO_DIR ? { dir: process.env.RECORD_VIDEO_DIR } : undefined });
+      const context = await browser.newContext({ viewport: { width: 1280, height: 820 }, ignoreHTTPSErrors: true, recordVideo: process.env.RECORD_VIDEO_DIR ? { dir: process.env.RECORD_VIDEO_DIR } : undefined });
       const page = await context.newPage();
       this.emit('session', { type: 'browser.action', sessionId, message: `Navigating to ${targetUrl}` });
       await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
-      const title = await page.title();
-      const url = page.url();
-      const accessibility = await page.locator('body').innerText({ timeout: 10000 }).catch(() => '');
-      const domSummary = await page.evaluate(() => Array.from(document.querySelectorAll('a,button,input,select,textarea,[role]')).slice(0, 80).map((el) => ({ tag: el.tagName.toLowerCase(), role: el.getAttribute('role'), text: (el.innerText || el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.name || '').trim().slice(0, 120), type: el.getAttribute('type'), href: el.getAttribute('href') })));
-      const domResult = await toolRegistry.execute('dom.extract', { note: JSON.stringify(domSummary) }, { sessionId, scope: 'browser' });
-      const screenshotBuffer = await page.screenshot({ fullPage: true, type: 'png' });
-      const dataUrl = `data:image/png;base64,${screenshotBuffer.toString('base64')}`;
-      screenshots.push({ id: uuid(), timestamp: new Date().toISOString(), src: dataUrl, label: `${browserName} frame: ${title || url}` });
-      domSnapshots.push({ id: uuid(), timestamp: new Date().toISOString(), url, title, interactiveElements: domSummary });
-      observations.push({ category: 'browser', message: `Loaded ${url} with title "${title || 'untitled'}".`, metadata: { browserName } });
-      observations.push({ category: 'perception', message: `Extracted ${domResult.regions.length} interactive DOM region(s) for command: ${command}.`, metadata: { regions: domResult.regions, visibleTextChars: accessibility.length } });
-      if (!domSummary.length) failures.push('no_interactive_elements_detected');
+      await this.capturePageEvidence({ page, browserName, command, sessionId, screenshots, domSnapshots, observations, label: 'initial load' });
+
+      const maxSteps = Math.max(2, Number(process.env.EXECUTION_MAX_STEPS || 5));
+      for (let step = 1; step <= maxSteps; step += 1) {
+        const action = await this.performNextBrowserAction({ page, command, step });
+        if (!action) break;
+        performedActions.push(action);
+        this.emit('session', { type: 'browser.action', sessionId, message: `${step}. ${action.message}` });
+        await page.waitForLoadState('domcontentloaded', { timeout: 5000 }).catch(() => {});
+        await page.waitForTimeout(350);
+        await this.capturePageEvidence({ page, browserName, command, sessionId, screenshots, domSnapshots, observations, label: `after ${action.message}` });
+      }
+
+      finalUrl = page.url();
+      if (!performedActions.length) failures.push('no_safe_follow_up_actions_detected');
+      observations.push({ category: 'browser', message: `Executed ${performedActions.length} browser action(s) after loading ${finalUrl}.`, metadata: { performedActions } });
       await context.close();
-      return { result: `Browser execution completed against ${url}; captured screenshot, DOM snapshot, and ${domSummary.length} interactive element(s).`, observations, screenshots, domSnapshots, failures };
+      return { result: `Browser execution completed against ${finalUrl}; captured ${screenshots.length} frame(s), ${domSnapshots.length} DOM snapshot(s), and performed ${performedActions.length} action(s).`, observations, screenshots, domSnapshots, failures };
     } catch (error) {
       failures.push(error.message);
       observations.push({ category: 'failure', message: `Browser execution failed: ${error.message}` });
-      return { result: `Browser execution failed for ${targetUrl}: ${error.message}`, observations, screenshots, domSnapshots, failures };
+      return { result: `Browser execution failed for ${finalUrl}: ${error.message}`, observations, screenshots, domSnapshots, failures };
     } finally {
       await browser.close();
     }
+  }
+
+  async capturePageEvidence({ page, browserName, command, sessionId, screenshots, domSnapshots, observations, label }) {
+    const title = await page.title().catch(() => 'untitled');
+    const url = page.url();
+    const accessibility = await page.locator('body').innerText({ timeout: 5000 }).catch(() => '');
+    const domSummary = await page.evaluate(() => Array.from(document.querySelectorAll('a,button,input,select,textarea,[role]')).slice(0, 120).map((el, index) => ({
+      index,
+      tag: el.tagName.toLowerCase(),
+      role: el.getAttribute('role'),
+      text: (el.innerText || el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.name || '').trim().slice(0, 120),
+      type: el.getAttribute('type'),
+      href: el.getAttribute('href')
+    }))).catch(() => []);
+    const domResult = await toolRegistry.execute('dom.extract', { note: JSON.stringify(domSummary) }, { sessionId, scope: 'browser' });
+    const screenshotBuffer = await page.screenshot({ fullPage: true, type: 'png' });
+    screenshots.push({ id: uuid(), timestamp: new Date().toISOString(), src: `data:image/png;base64,${screenshotBuffer.toString('base64')}`, label: `${browserName} frame (${label}): ${title || url}` });
+    domSnapshots.push({ id: uuid(), timestamp: new Date().toISOString(), url, title, interactiveElements: domSummary });
+    observations.push({ category: 'browser', message: `Captured ${label} at ${url} with title "${title || 'untitled'}".`, metadata: { browserName } });
+    observations.push({ category: 'perception', message: `Extracted ${domResult.regions.length} interactive DOM region(s) for command: ${command}.`, metadata: { regions: domResult.regions, visibleTextChars: accessibility.length } });
+    return domSummary;
+  }
+
+  async performNextBrowserAction({ page, command, step }) {
+    const fillLocator = page.locator('input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="checkbox"]):not([type="radio"]), textarea').filter({ hasNotText: /^$/ }).first();
+    if (step === 1 && await fillLocator.count().catch(() => 0)) {
+      const value = /email|login|sign in/i.test(command) ? 'qa@example.com' : 'QA automation note';
+      await fillLocator.fill(value, { timeout: 2500 });
+      return { kind: 'fill', message: `Filled first available field with ${value}` };
+    }
+
+    const candidates = page.locator('button:visible, [role="button"]:visible, a:visible, input[type="submit"]:visible');
+    const count = Math.min(await candidates.count().catch(() => 0), 20);
+    for (let index = step - 1; index < count; index += 1) {
+      const candidate = candidates.nth(index);
+      const text = ((await candidate.innerText({ timeout: 1000 }).catch(() => '')) || (await candidate.getAttribute('aria-label').catch(() => '')) || (await candidate.getAttribute('value').catch(() => '')) || '').trim();
+      if (/delete|remove|logout|sign out|cancel|reset|danger/i.test(text)) continue;
+      await candidate.click({ timeout: 3000 }).catch(async () => candidate.press('Enter', { timeout: 1000 }));
+      return { kind: 'click', message: `Activated ${text || `interactive element ${index + 1}`}` };
+    }
+    return null;
   }
 }
