@@ -1,246 +1,144 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Bot, Brain, MessageSquare, Network, Play, Upload } from 'lucide-react';
+import { Activity, Bot, Brain, Database, GitBranch, MessageSquare, Network, Play, Settings, Shield, Upload, Workflow, Zap } from 'lucide-react';
 import './styles.css';
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:5050/api';
+const WS_BASE = (import.meta.env.VITE_WS_BASE || API_BASE.replace(/^http/, 'ws').replace(/\/api$/, '')).replace(/\/$/, '');
 
-// Fetch helper keeps API calls consistent and throws readable errors for the log panel.
 async function api(path, options = {}) {
-  const response = await fetch(`${API_BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options
-  });
+  const response = await fetch(`${API_BASE}${path}`, { headers: { 'Content-Type': 'application/json' }, ...options });
   if (!response.ok) throw new Error(await response.text());
   return response.json();
 }
 
-// App coordinates tab state, API state, and user-triggered agent operations.
 function App() {
-  const [mainTab, setMainTab] = useState('Knowledge');
+  const [section, setSection] = useState('Dashboard');
   const [knowledgeTab, setKnowledgeTab] = useState('Graph');
   const [actionTab, setActionTab] = useState('Act');
-  const [graphState, setGraphState] = useState({ nodes: [], edges: [], logs: [], memoryInsights: [], sampleImages: [] });
+  const [state, setState] = useState({ nodes: [], edges: [], logs: [], memoryInsights: [], memoryVersions: [], sessions: [], agents: [], tools: [], sampleImages: [] });
   const [chatHistory, setChatHistory] = useState([]);
   const [chatQuery, setChatQuery] = useState('');
-  const [enhanceForm, setEnhanceForm] = useState({ title: '', content: '', imageAlt: '' });
+  const [command, setCommand] = useState('Perform exploratory testing on checkout flow');
+  const [selectedAgent, setSelectedAgent] = useState('agent-exploratory-qa');
+  const [enhanceForm, setEnhanceForm] = useState({ title: '', content: '', imageAlt: '', businessRule: '' });
+  const [stream, setStream] = useState([{ type: 'system', message: 'Waiting for live execution stream…' }]);
   const [lastAction, setLastAction] = useState(null);
 
-  // Load seeded graph state once the UI mounts.
+  useEffect(() => { refresh(); }, []);
   useEffect(() => {
-    api('/graph').then(setGraphState).catch((error) => console.error(error));
+    const socket = new WebSocket(`${WS_BASE}/ws/executions`);
+    socket.onmessage = (event) => setStream((items) => [JSON.parse(event.data), ...items].slice(0, 60));
+    socket.onerror = () => setStream((items) => [{ type: 'warning', message: 'WebSocket unavailable; REST execution still works.' }, ...items]);
+    return () => socket.close();
   }, []);
 
-  // Type counts summarize graph memory for the header chips.
-  const typeCounts = useMemo(() => {
-    return graphState.nodes.reduce((counts, node) => {
-      counts[node.type] = (counts[node.type] || 0) + 1;
-      return counts;
-    }, {});
-  }, [graphState.nodes]);
-
-  // Sends new onboarding text and optional image notes to the graph service.
+  async function refresh() { setState(await api('/graph')); }
   async function submitEnhancement(event) {
     event.preventDefault();
-    const state = await api('/enhance', { method: 'POST', body: JSON.stringify(enhanceForm) });
-    setGraphState(state);
-    setEnhanceForm({ title: '', content: '', imageAlt: '' });
+    setState(await api('/enhance', { method: 'POST', body: JSON.stringify(enhanceForm) }));
+    setEnhanceForm({ title: '', content: '', imageAlt: '', businessRule: '' });
   }
-
-  // Runs one agent action iteration and refreshes graph memory with the result.
-  async function runActionLoop() {
-    const result = await api('/act', { method: 'POST' });
+  async function runActionLoop(event) {
+    event.preventDefault();
+    const result = await api('/act', { method: 'POST', body: JSON.stringify({ command, agentId: selectedAgent }) });
     setLastAction(result.action);
-    setGraphState(result.state);
+    setState(result.state);
   }
-
-  // Sends a natural-language query to graph-backed chat and appends the response.
   async function sendChat(event) {
     event.preventDefault();
     const result = await api('/chat', { method: 'POST', body: JSON.stringify({ query: chatQuery }) });
-    setChatHistory((history) => [...history, { query: chatQuery, answer: result.answer, matches: result.matches }]);
-    setGraphState(result.state);
+    setChatHistory((history) => [{ query: chatQuery, answer: result.answer, matches: result.matches }, ...history]);
+    setState(result.state);
     setChatQuery('');
   }
 
+  const counts = useMemo(() => state.nodes.reduce((acc, node) => ({ ...acc, [node.type]: (acc[node.type] || 0) + 1 }), {}), [state.nodes]);
+  const nav = ['Dashboard', 'Knowledge', 'Actions', 'Memory', 'Sessions', 'Agents', 'Settings'];
+
   return (
-    <main className="app-shell">
-      <section className="hero">
-        <div>
-          <p className="eyebrow">MERN POC</p>
-          <h1>AI-powered onboarding and exploratory QA agent</h1>
-          <p>
-            Ingest onboarding knowledge, visualize the graph, simulate exploratory testing, and chat with graph-backed memory.
-          </p>
-        </div>
-        <div className="metric-grid">
-          {Object.entries(typeCounts).map(([type, count]) => (
-            <span className="metric" key={type}>{count} {type}</span>
-          ))}
-        </div>
-      </section>
-
-      <nav className="main-tabs">
-        {['Knowledge', 'Action'].map((tab) => (
-          <button className={mainTab === tab ? 'active' : ''} onClick={() => setMainTab(tab)} key={tab}>{tab}</button>
-        ))}
-      </nav>
-
-      {mainTab === 'Knowledge' ? (
-        <TabbedPanel tabs={['Graph', 'Memory Insights', 'Enhance']} active={knowledgeTab} onChange={setKnowledgeTab}>
-          {knowledgeTab === 'Graph' && <GraphTab state={graphState} />}
-          {knowledgeTab === 'Memory Insights' && <MemoryTab insights={graphState.memoryInsights} logs={graphState.logs} />}
-          {knowledgeTab === 'Enhance' && <EnhanceTab form={enhanceForm} setForm={setEnhanceForm} onSubmit={submitEnhancement} logs={graphState.logs} />}
-        </TabbedPanel>
-      ) : (
-        <TabbedPanel tabs={['Act', 'Chat']} active={actionTab} onChange={setActionTab}>
-          {actionTab === 'Act' && <ActTab onRun={runActionLoop} lastAction={lastAction} logs={graphState.logs} />}
-          {actionTab === 'Chat' && <ChatTab query={chatQuery} setQuery={setChatQuery} onSubmit={sendChat} history={chatHistory} logs={graphState.logs} />}
-        </TabbedPanel>
-      )}
-    </main>
+    <div className="app-frame">
+      <aside className="sidebar">
+        <div className="brand"><span><Bot size={22} /></span><b>QA Master</b><small>Agent OS</small></div>
+        <nav>{nav.map((item) => <button key={item} className={section === item ? 'active' : ''} onClick={() => setSection(item)}>{iconFor(item)}{item}</button>)}</nav>
+      </aside>
+      <main className="workspace">
+        <header className="topbar">
+          <div><p className="eyebrow">Operational AI QA platform</p><h1>{section}</h1></div>
+          <div className="status"><span className="pulse" /> Live memory · {state.memoryVersions.length || 0} versions</div>
+        </header>
+        {section === 'Dashboard' && <Dashboard counts={counts} state={state} setSection={setSection} />}
+        {section === 'Knowledge' && <Knowledge tabs={{ knowledgeTab, setKnowledgeTab }} state={state} form={enhanceForm} setForm={setEnhanceForm} onSubmit={submitEnhancement} />}
+        {section === 'Actions' && <Actions actionTab={actionTab} setActionTab={setActionTab} command={command} setCommand={setCommand} agents={state.agents} selectedAgent={selectedAgent} setSelectedAgent={setSelectedAgent} onRun={runActionLoop} lastAction={lastAction} logs={state.logs} stream={stream} chat={{ chatQuery, setChatQuery, sendChat, chatHistory }} />}
+        {section === 'Memory' && <Memory state={state} />}
+        {section === 'Sessions' && <Sessions sessions={state.sessions} />}
+        {section === 'Agents' && <Agents agents={state.agents} tools={state.tools} />}
+        {section === 'Settings' && <SettingsPanel />}
+      </main>
+    </div>
   );
 }
 
-// TabbedPanel renders shared sub-tab controls for Knowledge and Action areas.
-function TabbedPanel({ tabs, active, onChange, children }) {
-  return (
-    <section className="panel">
-      <div className="sub-tabs">
-        {tabs.map((tab) => (
-          <button className={active === tab ? 'active' : ''} onClick={() => onChange(tab)} key={tab}>{tab}</button>
-        ))}
-      </div>
-      {children}
-    </section>
-  );
+function iconFor(item) {
+  const icons = { Dashboard: <Activity size={18} />, Knowledge: <Network size={18} />, Actions: <Zap size={18} />, Memory: <Brain size={18} />, Sessions: <Workflow size={18} />, Agents: <Bot size={18} />, Settings: <Settings size={18} /> };
+  return icons[item];
 }
 
-// GraphTab presents a lightweight graph visualization and sample UI image cards.
+function Dashboard({ counts, state, setSection }) {
+  return <section className="grid two"><div className="hero-card"><p className="eyebrow">Persistent application intelligence</p><h2>Onboard agents like human QA engineers.</h2><p>The MVP combines graph memory, RAG chunks, version lineage, agent profiles, WebSocket execution streaming, and session replay foundations.</p><button onClick={() => setSection('Actions')} className="primary"><Play size={16} /> Run exploratory session</button></div><div className="metric-grid">{Object.entries(counts).map(([type, count]) => <article className="metric" key={type}><b>{count}</b><span>{type}</span></article>)}</div><LogPanel logs={state.logs} /><VersionPanel versions={state.memoryVersions} /></section>;
+}
+
+function Knowledge({ tabs, state, form, setForm, onSubmit }) {
+  const names = ['Graph', 'Memory Insights', 'Enhance'];
+  return <section className="panel"><TabBar tabs={names} active={tabs.knowledgeTab} onChange={tabs.setKnowledgeTab} />{tabs.knowledgeTab === 'Graph' && <GraphTab state={state} />}{tabs.knowledgeTab === 'Memory Insights' && <Memory state={state} />}{tabs.knowledgeTab === 'Enhance' && <EnhanceTab form={form} setForm={setForm} onSubmit={onSubmit} logs={state.logs} />}</section>;
+}
+
 function GraphTab({ state }) {
-  return (
-    <div className="two-column">
-      <section className="card">
-        <h2><Network size={20} /> Knowledge graph</h2>
-        <div className="graph-canvas">
-          {state.nodes.map((node, index) => (
-            <article className={`node node-${node.type.toLowerCase()}`} style={{ '--i': index }} key={node.id}>
-              <strong>{node.label}</strong>
-              <span>{node.type}</span>
-            </article>
-          ))}
-        </div>
-      </section>
-      <section className="card">
-        <h2>Relationships and UI examples</h2>
-        <div className="edge-list">
-          {state.edges.slice(0, 16).map((edge) => (
-            <p key={edge.id}>{edge.source} <b>{edge.relationship}</b> {edge.target}</p>
-          ))}
-        </div>
-        <div className="image-grid">
-          {state.sampleImages.map((image) => (
-            <figure key={image.id}>
-              <img src={image.src} alt={image.alt} />
-              <figcaption>{image.title}</figcaption>
-            </figure>
-          ))}
-        </div>
-      </section>
-    </div>
-  );
+  const featured = state.nodes.filter((node) => ['Workflow', 'Screen', 'BusinessRule', 'Action', 'Feature'].includes(node.type)).slice(0, 34);
+  return <div className="grid two"><section className="card wide"><h2><Network size={20} /> Interactive knowledge graph foundation</h2><div className="graph-canvas">{featured.map((node, index) => <article className={`node node-${node.type.toLowerCase()}`} style={{ '--i': index }} key={node.id}><strong>{node.label}</strong><span>{node.type} · {Math.round((node.confidence || .7) * 100)}%</span></article>)}</div></section><section className="card"><h2>Relationship trace</h2><div className="edge-list">{state.edges.slice(0, 28).map((edge) => <p key={edge.id}>{edge.source} <b>{edge.relationship}</b> {edge.target}</p>)}</div></section><section className="card wide image-grid">{state.sampleImages.map((image) => <figure key={image.id}><img src={image.src} alt={image.alt} /><figcaption>{image.title}</figcaption></figure>)}</section></div>;
 }
 
-// MemoryTab shows graph evolution and the underlying detailed log stream.
-function MemoryTab({ insights, logs }) {
-  return (
-    <div className="two-column">
-      <section className="card">
-        <h2><Brain size={20} /> Memory insights</h2>
-        {insights.map((insight) => (
-          <article className="timeline-item" key={insight.id}>
-            <time>{new Date(insight.timestamp).toLocaleTimeString()}</time>
-            <p>{insight.message}</p>
-            <span>{insight.graphSize} graph nodes</span>
-          </article>
-        ))}
-      </section>
-      <LogPanel logs={logs} />
-    </div>
-  );
+function Memory({ state }) {
+  return <div className="grid two"><VersionPanel versions={state.memoryVersions} /><section className="card"><h2><GitBranch size={20} /> Memory lineage and refinements</h2>{state.memoryInsights.map((insight) => <article className="timeline-item" key={insight.id}><time>{new Date(insight.timestamp).toLocaleString()}</time><p>{insight.message}</p><span>{insight.graphSize} nodes · confidence {Math.round((insight.confidence || 0) * 100)}% · {(insight.tags || []).join(', ')}</span></article>)}</section></div>;
 }
 
-// EnhanceTab collects new text and UI-image notes to expand graph knowledge.
 function EnhanceTab({ form, setForm, onSubmit, logs }) {
-  return (
-    <div className="two-column">
-      <section className="card">
-        <h2><Upload size={20} /> Add onboarding knowledge</h2>
-        <form className="stack" onSubmit={onSubmit}>
-          <label>Title<input value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} required /></label>
-          <label>Document text<textarea value={form.content} onChange={(event) => setForm({ ...form, content: event.target.value })} required rows="7" /></label>
-          <label>Optional UI image notes<textarea value={form.imageAlt} onChange={(event) => setForm({ ...form, imageAlt: event.target.value })} rows="4" /></label>
-          <button className="primary">Enhance graph</button>
-        </form>
-      </section>
-      <LogPanel logs={logs} />
-    </div>
-  );
+  return <div className="grid two"><section className="card"><h2><Upload size={20} /> Enhance application memory</h2><form className="stack" onSubmit={onSubmit}><label>Title<input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required /></label><label>Onboarding document / notes<textarea value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })} required rows="6" /></label><label>Screenshot or UI capture notes<textarea value={form.imageAlt} onChange={(e) => setForm({ ...form, imageAlt: e.target.value })} rows="3" /></label><label>Business rule / clarification<textarea value={form.businessRule} onChange={(e) => setForm({ ...form, businessRule: e.target.value })} rows="3" /></label><button className="primary">Run ingestion pipeline</button></form></section><LogPanel logs={logs} /></div>;
 }
 
-// ActTab runs and displays the simulated exploratory testing loop.
-function ActTab({ onRun, lastAction, logs }) {
-  return (
-    <div className="two-column">
-      <section className="card action-card">
-        <h2><Play size={20} /> Exploratory QA loop</h2>
-        <p>The agent selects the next Action node, traces related features, and logs a concrete test idea.</p>
-        <button className="primary" onClick={onRun}>Run next action</button>
-        {lastAction && <pre>{lastAction.result}</pre>}
-      </section>
-      <LogPanel logs={logs} />
-    </div>
-  );
+function Actions(props) {
+  const tabs = ['Act', 'Chat'];
+  return <section className="panel"><TabBar tabs={tabs} active={props.actionTab} onChange={props.setActionTab} />{props.actionTab === 'Act' ? <ActTab {...props} /> : <ChatTab {...props.chat} logs={props.logs} />}</section>;
 }
 
-// ChatTab supports natural-language graph lookup and displays matched evidence.
-function ChatTab({ query, setQuery, onSubmit, history, logs }) {
-  return (
-    <div className="two-column">
-      <section className="card chat-card">
-        <h2><MessageSquare size={20} /> Graph chat</h2>
-        <form className="chat-form" onSubmit={onSubmit}>
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Ask about login, checkout, defects..." required />
-          <button className="primary"><Bot size={16} /> Ask</button>
-        </form>
-        <div className="chat-history">
-          {history.map((item, index) => (
-            <article key={`${item.query}-${index}`}>
-              <b>You:</b> {item.query}
-              <p><b>Agent:</b> {item.answer}</p>
-            </article>
-          ))}
-        </div>
-      </section>
-      <LogPanel logs={logs} />
-    </div>
-  );
+function ActTab({ command, setCommand, agents, selectedAgent, setSelectedAgent, onRun, lastAction, logs, stream }) {
+  return <div className="execution-layout"><section className="card console"><h2><Play size={20} /> Operational execution console</h2><form onSubmit={onRun} className="stack"><label>High-level QA command<textarea value={command} onChange={(e) => setCommand(e.target.value)} rows="3" /></label><label>Agent<select value={selectedAgent} onChange={(e) => setSelectedAgent(e.target.value)}>{agents.map((agent) => <option value={agent.id} key={agent.id}>{agent.name}</option>)}</select></label><button className="primary"><Zap size={16} /> Execute with live stream</button></form><h3>Live execution logs</h3><div className="terminal">{stream.map((event, index) => <p key={index}><b>{event.type}</b> {event.log?.message || event.message || event.session?.status || event.sessionId}</p>)}</div><LogPanel logs={logs} /></section><section className="card viewer"><h2>Live UI execution viewer</h2><div className="browser-frame"><div className="browser-bar"><span /><span /><span /></div><img src={lastAction?.session?.screenshots?.[0]?.src || '/samples/checkout.svg'} alt="Latest execution frame" /><div className="highlight">Current target</div></div>{lastAction && <pre>{lastAction.result}</pre>}</section></div>;
 }
 
-// LogPanel is reused in each tab to satisfy the detailed action logging requirement.
+function ChatTab({ chatQuery, setChatQuery, sendChat, chatHistory, logs }) {
+  return <div className="grid two"><section className="card"><h2><MessageSquare size={20} /> Memory-backed agent chat</h2><form className="chat-form" onSubmit={sendChat}><input value={chatQuery} onChange={(e) => setChatQuery(e.target.value)} placeholder="Ask about workflows, validations, recurring failures…" required /><button className="primary"><Bot size={16} /> Ask</button></form><div className="chat-history">{chatHistory.map((item, index) => <article key={index}><b>You:</b> {item.query}<p><b>Agent:</b> {item.answer}</p><small>Sources: {item.matches.map((match) => match.label).join(', ')}</small></article>)}</div></section><LogPanel logs={logs} /></div>;
+}
+
+function Sessions({ sessions }) {
+  return <section className="grid two">{sessions.length ? sessions.map((session) => <article className="card" key={session.id}><h2>{session.command}</h2><p><b>Status:</b> {session.status}</p><p><b>Agent:</b> {session.agent}</p><p><b>Memory refs:</b> {session.memoryReferences.join(', ') || 'None'}</p><details><summary>Replay logs</summary>{session.logs.map((log) => <p key={log.id}>{log.category}: {log.message}</p>)}</details></article>) : <Empty title="No sessions yet" body="Run an action to create a replayable execution session." />}</section>;
+}
+
+function Agents({ agents, tools }) {
+  return <div className="grid two"><section className="card"><h2><Bot size={20} /> Specialized agents</h2>{agents.map((agent) => <article className="timeline-item" key={agent.id}><b>{agent.name}</b><p>{agent.strategy}</p><span>Scope: {agent.scope} · Tools: {agent.tools.join(', ')}</span></article>)}</section><section className="card"><h2><Database size={20} /> MCP-compatible tool registry</h2>{tools.map((tool) => <article className="timeline-item" key={tool.name}><b>{tool.name}</b><p>{tool.description}</p><span>{tool.permissions.join(', ')}</span></article>)}</section></div>;
+}
+
+function SettingsPanel() {
+  return <div className="grid two"><section className="card"><h2><Shield size={20} /> Security controls</h2><ul><li>Authentication/RBAC extension points</li><li>Scoped tool permissions and audit log</li><li>Session isolation and execution replay boundaries</li><li>Environment-driven secrets and service configuration</li></ul></section><section className="card"><h2>Infrastructure adapters</h2><ul><li>PostgreSQL + pgvector schema</li><li>Neo4j graph schema</li><li>Redis queue/session orchestration</li><li>Docker Compose for local production parity</li></ul></section></div>;
+}
+
+function VersionPanel({ versions }) {
+  return <section className="card"><h2><Brain size={20} /> Versioned memory states</h2>{versions.map((version) => <article className="timeline-item version" key={version.id}><b>{version.id}</b><p>{version.summary}</p><span>{version.nodeCount} nodes · {version.edgeCount} edges · confidence {Math.round(version.confidence * 100)}% · parent {version.parentId || 'root'}</span></article>)}</section>;
+}
+
 function LogPanel({ logs }) {
-  return (
-    <section className="card log-panel">
-      <h2>Detailed logs</h2>
-      {logs.slice(0, 18).map((log) => (
-        <article key={log.id}>
-          <span>{log.category}</span>
-          <p>{log.message}</p>
-          <time>{new Date(log.timestamp).toLocaleTimeString()}</time>
-        </article>
-      ))}
-    </section>
-  );
+  return <section className="card log-panel"><h2>Audit trail</h2>{logs.slice(0, 18).map((log) => <article key={log.id}><span>{log.category}</span><p>{log.message}</p><time>{new Date(log.timestamp).toLocaleTimeString()}</time></article>)}</section>;
 }
+function TabBar({ tabs, active, onChange }) { return <div className="sub-tabs">{tabs.map((tab) => <button className={active === tab ? 'active' : ''} onClick={() => onChange(tab)} key={tab}>{tab}</button>)}</div>; }
+function Empty({ title, body }) { return <section className="card"><h2>{title}</h2><p>{body}</p></section>; }
 
 createRoot(document.getElementById('root')).render(<App />);

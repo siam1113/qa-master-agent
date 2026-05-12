@@ -1,8 +1,8 @@
 {
-  "name": "qa-master-agent-poc",
-  "version": "0.1.0",
+  "name": "qa-master-agent",
+  "version": "1.0.0",
   "private": true,
-  "description": "MERN proof-of-concept for an AI-powered onboarding and exploratory QA agent.",
+  "description": "Production-ready MVP foundation for AI-powered onboarding, exploratory QA, and application intelligence.",
   "type": "module",
   "scripts": {
     "dev": "sh -c 'npm run server:dev & npm run client:dev'",
@@ -10,12 +10,14 @@
     "client:dev": "npm --prefix client run dev",
     "start": "node server/index.js",
     "build": "npm --prefix client run build",
-    "test": "node server/tests/knowledgeGraph.test.js"
+    "test": "node server/tests/knowledgeGraph.test.js",
+    "test:server": "node server/tests/knowledgeGraph.test.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
-    "mongoose": "^8.9.5"
+    "mongoose": "^8.9.5",
+    "ws": "^8.18.0"
   }
 }

@@ -4,69 +4,84 @@ import cors from 'cors';
 import mongoose from 'mongoose';
 import fs from 'fs';
 import path from 'path';
+import http from 'http';
+import { WebSocketServer } from 'ws';
 import { fileURLToPath } from 'url';
-import { graphRouter } from './routes/graphRoutes.js';
+import { createGraphRouter } from './routes/graphRoutes.js';
 import { knowledgeGraph } from './services/knowledgeGraph.js';
 import { GraphSnapshot } from './models/GraphSnapshot.js';
+import { env, validateEnvironment } from './config/env.js';
+import { ExecutionEngine } from './services/executionEngine.js';
+import { observability } from './services/observability.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const app = express();
-const port = process.env.PORT || 5050;
+const server = http.createServer(app);
+const executionEngine = new ExecutionEngine({ graph: knowledgeGraph });
 
-// JSON and CORS middleware keep the React client and API simple for local development.
-app.use(cors());
-app.use(express.json({ limit: '2mb' }));
-
-// Static sample SVGs emulate uploaded UI images used by the Knowledge tab.
-app.use('/samples', express.static(path.join(__dirname, '../client/public/samples')));
-
-// API routes expose graph state, knowledge enhancement, action simulation, and chat.
-app.use('/api', graphRouter);
-
-// A small health endpoint helps confirm the server is running during demos.
-app.get('/api/health', (_request, response) => {
-  response.json({ ok: true, service: 'qa-master-agent-poc' });
+validateEnvironment(console);
+app.disable('x-powered-by');
+app.use(cors({ origin: env.corsOrigin === '*' ? true : env.corsOrigin }));
+app.use(express.json({ limit: '10mb' }));
+app.use((request, response, next) => {
+  const started = Date.now();
+  response.on('finish', () => observability.event('http', `${request.method} ${request.path} ${response.statusCode}`, { durationMs: Date.now() - started }));
+  next();
 });
 
-// In production-style mode, Express can serve the built React client when it exists.
+app.use('/samples', express.static(path.join(__dirname, '../client/public/samples')));
+app.use('/api', createGraphRouter({ executionEngine }));
+app.get('/api/health', (_request, response) => response.json({ ok: true, service: 'qa-master-agent', architecture: 'memory+reasoning+execution', timestamp: new Date().toISOString() }));
+
+app.use((error, _request, response, _next) => {
+  observability.event('error', error.message, { stack: error.stack });
+  response.status(500).json({ error: 'Internal server error', message: env.nodeEnv === 'development' ? error.message : undefined });
+});
+
 const clientDist = path.join(__dirname, '../client/dist');
 if (fs.existsSync(clientDist)) {
   app.use(express.static(clientDist));
-  app.get('*', (_request, response) => {
-    response.sendFile(path.join(clientDist, 'index.html'));
-  });
+  app.get('*', (_request, response) => response.sendFile(path.join(clientDist, 'index.html')));
 }
 
-// Connects to MongoDB only when MONGO_URI is present; otherwise the POC stays in memory.
+const wss = new WebSocketServer({ server, path: '/ws/executions' });
+const clients = new Set();
+wss.on('connection', (socket) => {
+  clients.add(socket);
+  socket.send(JSON.stringify({ type: 'connected', message: 'Execution stream connected.' }));
+  socket.on('close', () => clients.delete(socket));
+});
+executionEngine.on('session', (event) => {
+  const payload = JSON.stringify(event);
+  for (const socket of clients) if (socket.readyState === socket.OPEN) socket.send(payload);
+});
+
 async function connectMongoIfConfigured() {
-  if (!process.env.MONGO_URI) {
-    knowledgeGraph.log('system', 'MONGO_URI not set; using in-memory graph storage.');
+  if (!env.mongoUri) {
+    knowledgeGraph.log('system', 'MONGO_URI not set; using adapter-backed local memory for development.');
     return;
   }
-  await mongoose.connect(process.env.MONGO_URI);
+  await mongoose.connect(env.mongoUri);
   knowledgeGraph.log('system', 'Connected to MongoDB for graph snapshot persistence.');
 }
 
-// Persists snapshots opportunistically so MongoDB supports demos without becoming a hard dependency.
 async function persistSnapshotIfConfigured() {
-  if (!process.env.MONGO_URI) return;
-  const state = knowledgeGraph.getState();
-  await GraphSnapshot.create(state);
+  if (!env.mongoUri) return;
+  await GraphSnapshot.create(knowledgeGraph.getState());
 }
 
-// Starts the API after seeding the graph and preparing optional persistence.
 async function start() {
   knowledgeGraph.seed();
   await connectMongoIfConfigured();
   await persistSnapshotIfConfigured();
-  app.listen(port, () => {
-    knowledgeGraph.log('system', `Server listening on port ${port}.`);
-    console.log(`QA Master Agent POC API listening on http://localhost:${port}`);
+  server.listen(env.port, () => {
+    knowledgeGraph.log('system', `Server listening on port ${env.port}.`);
+    console.log(`QA Master Agent API listening on http://localhost:${env.port}`);
   });
 }
 
 start().catch((error) => {
-  console.error('Failed to start QA Master Agent POC:', error);
+  console.error('Failed to start QA Master Agent:', error);
   process.exit(1);
 });
