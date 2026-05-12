@@ -1,4 +1,4 @@
-export const sampleDocuments = [
+export const fixtureDocuments = [
   {
     id: 'doc-auth-onboarding',
     title: 'Authentication Onboarding',
@@ -28,13 +28,13 @@ export const sampleDocuments = [
   }
 ];
 
-export const sampleImages = [
+export const fixtureImages = [
   {
     id: 'screen-login',
     title: 'Login Screen Mock',
     type: 'image',
     alt: 'Login form with email, password, MFA prompt, validation area, lockout banner, and forgot password link.',
-    src: '/samples/login.svg',
+    src: '/fixtures/login.svg',
     features: ['Email login', 'Multi-factor authentication', 'Forgot password', 'Account lockout feedback']
   },
   {
@@ -42,7 +42,7 @@ export const sampleImages = [
     title: 'QA Dashboard Mock',
     type: 'image',
     alt: 'Dashboard cards for active test charters, open defects, exploratory notes, risk score, and execution sessions.',
-    src: '/samples/dashboard.svg',
+    src: '/fixtures/dashboard.svg',
     features: ['QA dashboard', 'Test charters', 'Defect summary', 'Session notes', 'Risk-ranked workflows']
   },
   {
@@ -50,12 +50,12 @@ export const sampleImages = [
     title: 'Checkout Flow Mock',
     type: 'image',
     alt: 'Checkout review screen with promo code, payment status, retry controls, tax calculation, and confirmation receipt panels.',
-    src: '/samples/checkout.svg',
+    src: '/fixtures/checkout.svg',
     features: ['Cart review', 'Promo validation', 'Payment authorization', 'Receipt confirmation', 'Retryable payment failures']
   }
 ];
 
-export const sampleWorkflows = [
+export const fixtureWorkflows = [
   {
     id: 'workflow-authentication',
     name: 'Authentication and MFA',
@@ -74,7 +74,7 @@ export const sampleWorkflows = [
   }
 ];
 
-export const sampleBusinessRules = [
+export const fixtureBusinessRules = [
   {
     id: 'rule-auth-lockout',
     name: 'Authentication lockout policy',

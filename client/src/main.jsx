@@ -16,10 +16,11 @@ function App() {
   const [section, setSection] = useState('Dashboard');
   const [knowledgeTab, setKnowledgeTab] = useState('Graph');
   const [actionTab, setActionTab] = useState('Act');
-  const [state, setState] = useState({ nodes: [], edges: [], logs: [], memoryInsights: [], memoryVersions: [], sessions: [], agents: [], tools: [], sampleImages: [] });
+  const [state, setState] = useState({ nodes: [], edges: [], logs: [], memoryInsights: [], memoryVersions: [], sessions: [], agents: [], tools: [] });
   const [chatHistory, setChatHistory] = useState([]);
   const [chatQuery, setChatQuery] = useState('');
-  const [command, setCommand] = useState('Perform exploratory testing on checkout flow');
+  const [command, setCommand] = useState('Validate the critical workflow in the configured application');
+  const [targetUrl, setTargetUrl] = useState(import.meta.env.VITE_EXECUTION_BASE_URL || '');
   const [selectedAgent, setSelectedAgent] = useState('agent-exploratory-qa');
   const [enhanceForm, setEnhanceForm] = useState({ title: '', content: '', imageAlt: '', businessRule: '' });
   const [stream, setStream] = useState([{ type: 'system', message: 'Waiting for live execution stream…' }]);
@@ -41,7 +42,7 @@ function App() {
   }
   async function runActionLoop(event) {
     event.preventDefault();
-    const result = await api('/act', { method: 'POST', body: JSON.stringify({ command, agentId: selectedAgent }) });
+    const result = await api('/act', { method: 'POST', body: JSON.stringify({ command, agentId: selectedAgent, targetUrl }) });
     setLastAction(result.action);
     setState(result.state);
   }
@@ -69,7 +70,7 @@ function App() {
         </header>
         {section === 'Dashboard' && <Dashboard counts={counts} state={state} setSection={setSection} />}
         {section === 'Knowledge' && <Knowledge tabs={{ knowledgeTab, setKnowledgeTab }} state={state} form={enhanceForm} setForm={setEnhanceForm} onSubmit={submitEnhancement} />}
-        {section === 'Actions' && <Actions actionTab={actionTab} setActionTab={setActionTab} command={command} setCommand={setCommand} agents={state.agents} selectedAgent={selectedAgent} setSelectedAgent={setSelectedAgent} onRun={runActionLoop} lastAction={lastAction} logs={state.logs} stream={stream} chat={{ chatQuery, setChatQuery, sendChat, chatHistory }} />}
+        {section === 'Actions' && <Actions actionTab={actionTab} setActionTab={setActionTab} command={command} setCommand={setCommand} agents={state.agents} selectedAgent={selectedAgent} setSelectedAgent={setSelectedAgent} onRun={runActionLoop} lastAction={lastAction} logs={state.logs} stream={stream} targetUrl={targetUrl} setTargetUrl={setTargetUrl} chat={{ chatQuery, setChatQuery, sendChat, chatHistory }} />}
         {section === 'Memory' && <Memory state={state} />}
         {section === 'Sessions' && <Sessions sessions={state.sessions} />}
         {section === 'Agents' && <Agents agents={state.agents} tools={state.tools} />}
@@ -85,7 +86,7 @@ function iconFor(item) {
 }
 
 function Dashboard({ counts, state, setSection }) {
-  return <section className="grid two"><div className="hero-card"><p className="eyebrow">Persistent application intelligence</p><h2>Onboard agents like human QA engineers.</h2><p>The MVP combines graph memory, RAG chunks, version lineage, agent profiles, WebSocket execution streaming, and session replay foundations.</p><button onClick={() => setSection('Actions')} className="primary"><Play size={16} /> Run exploratory session</button></div><div className="metric-grid">{Object.entries(counts).map(([type, count]) => <article className="metric" key={type}><b>{count}</b><span>{type}</span></article>)}</div><LogPanel logs={state.logs} /><VersionPanel versions={state.memoryVersions} /></section>;
+  return <section className="grid two"><div className="hero-card"><p className="eyebrow">Persistent application intelligence</p><h2>Onboard agents like human QA engineers.</h2><p>The platform combines graph memory, RAG chunks, version lineage, agent profiles, WebSocket execution streaming, and session replay evidence.</p><button onClick={() => setSection('Actions')} className="primary"><Play size={16} /> Run exploratory session</button></div><div className="metric-grid">{Object.entries(counts).map(([type, count]) => <article className="metric" key={type}><b>{count}</b><span>{type}</span></article>)}</div><LogPanel logs={state.logs} /><VersionPanel versions={state.memoryVersions} /></section>;
 }
 
 function Knowledge({ tabs, state, form, setForm, onSubmit }) {
@@ -95,7 +96,7 @@ function Knowledge({ tabs, state, form, setForm, onSubmit }) {
 
 function GraphTab({ state }) {
   const featured = state.nodes.filter((node) => ['Workflow', 'Screen', 'BusinessRule', 'Action', 'Feature'].includes(node.type)).slice(0, 34);
-  return <div className="grid two"><section className="card wide"><h2><Network size={20} /> Interactive knowledge graph foundation</h2><div className="graph-canvas">{featured.map((node, index) => <article className={`node node-${node.type.toLowerCase()}`} style={{ '--i': index }} key={node.id}><strong>{node.label}</strong><span>{node.type} · {Math.round((node.confidence || .7) * 100)}%</span></article>)}</div></section><section className="card"><h2>Relationship trace</h2><div className="edge-list">{state.edges.slice(0, 28).map((edge) => <p key={edge.id}>{edge.source} <b>{edge.relationship}</b> {edge.target}</p>)}</div></section><section className="card wide image-grid">{state.sampleImages.map((image) => <figure key={image.id}><img src={image.src} alt={image.alt} /><figcaption>{image.title}</figcaption></figure>)}</section></div>;
+  return <div className="grid two"><section className="card wide"><h2><Network size={20} /> Interactive knowledge graph</h2><div className="graph-canvas">{featured.map((node, index) => <article className={`node node-${node.type.toLowerCase()}`} style={{ '--i': index }} key={node.id}><strong>{node.label}</strong><span>{node.type} · {Math.round((node.confidence || .7) * 100)}%</span></article>)}</div></section><section className="card"><h2>Relationship trace</h2><div className="edge-list">{state.edges.slice(0, 28).map((edge) => <p key={edge.id}>{edge.source} <b>{edge.relationship}</b> {edge.target}</p>)}</div></section><section className="card wide image-grid">{state.nodes.filter((node) => node.type === 'Screen' && node.src).map((image) => <figure key={image.id}><img src={image.src} alt={image.content} /><figcaption>{image.label}</figcaption></figure>)}</section></div>;
 }
 
 function Memory({ state }) {
@@ -111,8 +112,8 @@ function Actions(props) {
   return <section className="panel"><TabBar tabs={tabs} active={props.actionTab} onChange={props.setActionTab} />{props.actionTab === 'Act' ? <ActTab {...props} /> : <ChatTab {...props.chat} logs={props.logs} />}</section>;
 }
 
-function ActTab({ command, setCommand, agents, selectedAgent, setSelectedAgent, onRun, lastAction, logs, stream }) {
-  return <div className="execution-layout"><section className="card console"><h2><Play size={20} /> Operational execution console</h2><form onSubmit={onRun} className="stack"><label>High-level QA command<textarea value={command} onChange={(e) => setCommand(e.target.value)} rows="3" /></label><label>Agent<select value={selectedAgent} onChange={(e) => setSelectedAgent(e.target.value)}>{agents.map((agent) => <option value={agent.id} key={agent.id}>{agent.name}</option>)}</select></label><button className="primary"><Zap size={16} /> Execute with live stream</button></form><h3>Live execution logs</h3><div className="terminal">{stream.map((event, index) => <p key={index}><b>{event.type}</b> {event.log?.message || event.message || event.session?.status || event.sessionId}</p>)}</div><LogPanel logs={logs} /></section><section className="card viewer"><h2>Live UI execution viewer</h2><div className="browser-frame"><div className="browser-bar"><span /><span /><span /></div><img src={lastAction?.session?.screenshots?.[0]?.src || '/samples/checkout.svg'} alt="Latest execution frame" /><div className="highlight">Current target</div></div>{lastAction && <pre>{lastAction.result}</pre>}</section></div>;
+function ActTab({ command, setCommand, targetUrl, setTargetUrl, agents, selectedAgent, setSelectedAgent, onRun, lastAction, logs, stream }) {
+  return <div className="execution-layout"><section className="card console"><h2><Play size={20} /> Operational execution console</h2><form onSubmit={onRun} className="stack"><label>High-level QA command<textarea value={command} onChange={(e) => setCommand(e.target.value)} rows="3" required /></label><label>Target application URL<input value={targetUrl} onChange={(e) => setTargetUrl(e.target.value)} placeholder="https://app.example.com" /></label><label>Agent<select value={selectedAgent} onChange={(e) => setSelectedAgent(e.target.value)}>{agents.map((agent) => <option value={agent.id} key={agent.id}>{agent.name}</option>)}</select></label><button className="primary"><Zap size={16} /> Execute with live stream</button></form><h3>Live execution logs</h3><div className="terminal">{stream.map((event, index) => <p key={index}><b>{event.type}</b> {event.log?.message || event.message || event.session?.status || event.sessionId}</p>)}</div><LogPanel logs={logs} /></section><section className="card viewer"><h2>Live UI execution viewer</h2>{lastAction?.session?.screenshots?.[0]?.src ? <div className="browser-frame"><div className="browser-bar"><span /><span /><span /></div><img src={lastAction.session.screenshots[0].src} alt="Latest execution frame" /><div className="highlight">Captured frame</div></div> : <Empty title="No browser frame captured" body="Provide a reachable target URL and run an execution to stream real browser evidence." />}{lastAction && <pre>{lastAction.result}</pre>}</section></div>;
 }
 
 function ChatTab({ chatQuery, setChatQuery, sendChat, chatHistory, logs }) {
@@ -128,7 +129,7 @@ function Agents({ agents, tools }) {
 }
 
 function SettingsPanel() {
-  return <div className="grid two"><section className="card"><h2><Shield size={20} /> Security controls</h2><ul><li>Authentication/RBAC extension points</li><li>Scoped tool permissions and audit log</li><li>Session isolation and execution replay boundaries</li><li>Environment-driven secrets and service configuration</li></ul></section><section className="card"><h2>Infrastructure adapters</h2><ul><li>PostgreSQL + pgvector schema</li><li>Neo4j graph schema</li><li>Redis queue/session orchestration</li><li>Docker Compose for local production parity</li></ul></section></div>;
+  return <div className="grid two"><section className="card"><h2><Shield size={20} /> Security controls</h2><ul><li>API key protection and RBAC-ready service boundaries</li><li>Scoped tool permissions and audit log</li><li>Session isolation and execution replay boundaries</li><li>Environment-driven secrets and service configuration</li></ul></section><section className="card"><h2>Infrastructure adapters</h2><ul><li>PostgreSQL + pgvector schema</li><li>Neo4j graph schema</li><li>Redis queue/session orchestration</li><li>Docker Compose for local production parity</li></ul></section></div>;
 }
 
 function VersionPanel({ versions }) {

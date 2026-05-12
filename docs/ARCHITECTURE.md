@@ -18,8 +18,8 @@ flowchart LR
 ## Major modules
 
 - `server/services/knowledgeGraph.js` owns semantic, episodic, visual, workflow, and execution memory. It versions every material ingestion or execution refinement.
-- `server/services/vectorPipeline.js` chunks onboarding material and creates deterministic local embeddings for development; the adapter boundary can be swapped for OpenAI embeddings in production.
-- `server/services/executionEngine.js` wraps agent runs, emits WebSocket events, and records replayable sessions.
+- `server/services/vectorPipeline.js` chunks onboarding material and creates local vectors behind an adapter boundary that can be backed by hosted embedding providers.
+- `server/services/executionEngine.js` runs Playwright browser sessions, emits WebSocket events, and records replayable evidence.
 - `server/services/toolRegistry.js` provides MCP-compatible dynamic tool registration, scoped permissions, and audit logging.
 - `server/services/agentRegistry.js` defines specialized QA, onboarding, regression, and validation agents with independent strategies and tool scopes.
 
@@ -32,7 +32,7 @@ flowchart LR
 
 ## Scalability considerations
 
-- Move graph persistence from the in-process adapter to Neo4j using `infra/db/neo4j.cypher` constraints.
+- Use Neo4j constraints in `infra/db/neo4j.cypher` when promoting the file-backed graph state to a clustered graph backend.
 - Persist chunks and embeddings in PostgreSQL/pgvector using `infra/db/postgres.sql`.
 - Run Playwright workers behind Redis queues for sandboxed, horizontally scalable browser execution.
 - Keep WebSocket gateways stateless by publishing execution events through Redis streams or a durable queue.

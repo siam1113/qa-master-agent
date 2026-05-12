@@ -2,7 +2,7 @@
   "name": "qa-master-agent",
   "version": "1.0.0",
   "private": true,
-  "description": "Production-ready MVP foundation for AI-powered onboarding, exploratory QA, and application intelligence.",
+  "description": "Enterprise AI application intelligence and autonomous QA platform.",
   "type": "module",
   "scripts": {
     "dev": "sh -c 'npm run server:dev & npm run client:dev'",
@@ -18,6 +18,7 @@
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "mongoose": "^8.9.5",
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "playwright": "^1.52.0"
   }
 }

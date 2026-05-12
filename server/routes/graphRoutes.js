@@ -19,18 +19,23 @@ export function createGraphRouter({ executionEngine } = {}) {
 
   graphRouter.post('/act', async (request, response, next) => {
     try {
-      const { command = 'Perform exploratory testing on checkout flow', agentId = 'agent-exploratory-qa' } = request.body || {};
-      const result = executionEngine ? await executionEngine.run({ command, agentId }) : knowledgeGraph.simulateAction(command, agentRegistry.get(agentId));
+      const { command, agentId = 'agent-exploratory-qa', targetUrl, browserName } = request.body || {};
+      if (!command?.trim()) return response.status(400).json({ error: 'Command is required.' });
+      const result = await executionEngine.run({ command, agentId, targetUrl, browserName });
       response.json(result);
     } catch (error) {
       next(error);
     }
   });
 
-  graphRouter.post('/chat', (request, response) => {
-    const { query } = request.body;
-    if (!query?.trim()) return response.status(400).json({ error: 'Query is required.' });
-    response.json(knowledgeGraph.chat(query));
+  graphRouter.post('/chat', async (request, response, next) => {
+    try {
+      const { query } = request.body;
+      if (!query?.trim()) return response.status(400).json({ error: 'Query is required.' });
+      response.json(await knowledgeGraph.chat(query));
+    } catch (error) {
+      next(error);
+    }
   });
 
   graphRouter.get('/sessions', (_request, response) => response.json(knowledgeGraph.getState().sessions));

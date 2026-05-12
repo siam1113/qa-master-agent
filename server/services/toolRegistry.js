@@ -38,10 +38,25 @@ export const toolRegistry = new ToolRegistry();
 
 toolRegistry.register({
   name: 'dom.extract',
-  description: 'Extracts semantic UI regions from a captured DOM or screenshot note.',
+  description: 'Extracts semantic UI regions from a captured DOM snapshot.',
   scopes: ['browser', 'default'],
   permissions: ['read:dom'],
-  execute: async ({ note = '' }) => ({ regions: note.split(/[,.]/).map((item) => item.trim()).filter(Boolean).slice(0, 8) })
+  execute: async ({ note = '' }) => {
+    try {
+      const elements = JSON.parse(note);
+      if (Array.isArray(elements)) {
+        return {
+          regions: elements
+            .map((element) => [element.role || element.tag, element.type, element.text || element.href].filter(Boolean).join(': '))
+            .filter(Boolean)
+            .slice(0, 30)
+        };
+      }
+    } catch {
+      // Fall through to text extraction for non-JSON DOM notes.
+    }
+    return { regions: note.split(/[,.\n]/).map((item) => item.trim()).filter(Boolean).slice(0, 30) };
+  }
 });
 
 toolRegistry.register({

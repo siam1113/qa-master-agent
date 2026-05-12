@@ -13,26 +13,33 @@ import { GraphSnapshot } from './models/GraphSnapshot.js';
 import { env, validateEnvironment } from './config/env.js';
 import { ExecutionEngine } from './services/executionEngine.js';
 import { observability } from './services/observability.js';
+import { JsonFileStore } from './services/persistenceStore.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const app = express();
 const server = http.createServer(app);
 const executionEngine = new ExecutionEngine({ graph: knowledgeGraph });
+const store = new JsonFileStore({ filePath: env.storagePath });
 
 validateEnvironment(console);
 app.disable('x-powered-by');
 app.use(cors({ origin: env.corsOrigin === '*' ? true : env.corsOrigin }));
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '25mb' }));
 app.use((request, response, next) => {
   const started = Date.now();
   response.on('finish', () => observability.event('http', `${request.method} ${request.path} ${response.statusCode}`, { durationMs: Date.now() - started }));
   next();
 });
 
-app.use('/samples', express.static(path.join(__dirname, '../client/public/samples')));
-app.use('/api', createGraphRouter({ executionEngine }));
 app.get('/api/health', (_request, response) => response.json({ ok: true, service: 'qa-master-agent', architecture: 'memory+reasoning+execution', timestamp: new Date().toISOString() }));
+app.use('/api', (request, response, next) => {
+  if (!env.apiKey || request.path === '/health') return next();
+  const token = request.get('x-api-key') || request.get('authorization')?.replace(/^Bearer\s+/i, '');
+  if (token !== env.apiKey) return response.status(401).json({ error: 'Unauthorized' });
+  return next();
+});
+app.use('/api', createGraphRouter({ executionEngine }));
 
 app.use((error, _request, response, _next) => {
   observability.event('error', error.message, { stack: error.stack });
@@ -72,7 +79,16 @@ async function persistSnapshotIfConfigured() {
 }
 
 async function start() {
-  knowledgeGraph.seed();
+  const persisted = await store.load();
+  if (persisted) {
+    knowledgeGraph.hydrate(persisted);
+    knowledgeGraph.log('system', `Loaded persisted memory state from ${env.storagePath}.`);
+  } else if (env.seedFixtureData) {
+    knowledgeGraph.seedFixtures();
+  } else {
+    knowledgeGraph.log('system', 'Started with empty production memory. Ingest organizational knowledge to build graph state.');
+  }
+  knowledgeGraph.onPersist = async () => store.save(knowledgeGraph.getState());
   await connectMongoIfConfigured();
   await persistSnapshotIfConfigured();
   server.listen(env.port, () => {
