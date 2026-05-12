@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360">
+  <rect width="640" height="360" fill="#eff6ff"/>
+  <rect x="180" y="40" width="280" height="280" rx="24" fill="#ffffff" stroke="#93c5fd"/>
+  <text x="220" y="88" font-family="Arial" font-size="24" fill="#1e3a8a">Login</text>
+  <rect x="220" y="115" width="200" height="34" rx="8" fill="#dbeafe"/>
+  <text x="235" y="137" font-family="Arial" font-size="13" fill="#1d4ed8">email@example.com</text>
+  <rect x="220" y="165" width="200" height="34" rx="8" fill="#dbeafe"/>
+  <text x="235" y="187" font-family="Arial" font-size="13" fill="#1d4ed8">••••••••</text>
+  <rect x="220" y="215" width="200" height="38" rx="10" fill="#2563eb"/>
+  <text x="282" y="239" font-family="Arial" font-size="14" fill="#ffffff">Continue</text>
+  <text x="238" y="280" font-family="Arial" font-size="13" fill="#dc2626">MFA prompt + errors</text>
+</svg>

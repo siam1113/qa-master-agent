@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360">
+  <rect width="640" height="360" fill="#f8fafc"/>
+  <rect x="32" y="32" width="576" height="64" rx="16" fill="#0f172a"/>
+  <text x="56" y="72" font-family="Arial" font-size="24" fill="#ffffff">QA Dashboard</text>
+  <rect x="48" y="130" width="150" height="150" rx="18" fill="#dcfce7"/>
+  <text x="72" y="205" font-family="Arial" font-size="18" fill="#166534">Charters</text>
+  <rect x="245" y="130" width="150" height="150" rx="18" fill="#fee2e2"/>
+  <text x="282" y="205" font-family="Arial" font-size="18" fill="#991b1b">Defects</text>
+  <rect x="442" y="130" width="150" height="150" rx="18" fill="#fef3c7"/>
+  <text x="465" y="205" font-family="Arial" font-size="18" fill="#92400e">Notes</text>
+</svg>
