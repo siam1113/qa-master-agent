@@ -54,6 +54,35 @@ export class LlmProviderRouter {
     throw lastError;
   }
 
+  async completeVision({ system, prompt, imageSrc, metadata = {} }) {
+    const openai = this.providers.find((provider) => provider.name === 'openai' && provider.configured);
+    const usageEstimate = estimateTokens(`${prompt || ''} ${imageSrc ? '[image]' : ''}`);
+    if (!openai) {
+      observability.increment('llm.vision_unconfigured');
+      return { provider: 'none', model: 'extractive-vision-fallback', content: '', usage: { promptTokens: usageEstimate, completionTokens: 0, totalTokens: usageEstimate }, degraded: true };
+    }
+
+    let lastError;
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      try {
+        const response = await this.callOpenAI(openai, system, [{
+          role: 'user',
+          content: [
+            { type: 'text', text: prompt },
+            ...(imageSrc ? [{ type: 'image_url', image_url: { url: imageSrc } }] : [])
+          ]
+        }]);
+        observability.event('llm.vision', 'openai vision completion', { model: openai.model, attempt, ...metadata, usage: response.usage });
+        return response;
+      } catch (error) {
+        lastError = error;
+        observability.event('llm.vision.error', `openai attempt ${attempt} failed`, { model: openai.model, error: error.message, ...metadata });
+        await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
+      }
+    }
+    throw lastError;
+  }
+
   async callOpenAI(provider, system, messages) {
     const response = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
       method: 'POST',

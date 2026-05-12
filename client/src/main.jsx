@@ -38,6 +38,7 @@ function App() {
   const [agentForm, setAgentForm] = useState(emptyAgentForm);
   const [stream, setStream] = useState([{ type: 'system', message: 'Waiting for live execution stream…' }]);
   const [lastAction, setLastAction] = useState(null);
+  const [liveFrame, setLiveFrame] = useState(null);
   const [notice, setNotice] = useState(null);
 
   useEffect(() => { refresh(); }, []);
@@ -46,7 +47,12 @@ function App() {
   }, [state.agents, selectedAgent]);
   useEffect(() => {
     const socket = new WebSocket(`${WS_BASE}/ws/executions`);
-    socket.onmessage = (event) => setStream((items) => [JSON.parse(event.data), ...items].slice(0, 80));
+    socket.onmessage = (event) => {
+      const payload = JSON.parse(event.data);
+      if (payload.type === 'browser.frame') setLiveFrame(payload.frame);
+      if (payload.type === 'session.started') setLiveFrame(null);
+      setStream((items) => [payload, ...items].slice(0, 80));
+    };
     socket.onerror = () => setStream((items) => [{ type: 'warning', message: 'WebSocket unavailable; REST execution still works.' }, ...items]);
     return () => socket.close();
   }, []);
@@ -84,8 +90,10 @@ function App() {
   async function runActionLoop(event) {
     event.preventDefault();
     try {
+      setLiveFrame(null);
       const result = await api('/act', { method: 'POST', body: JSON.stringify({ command, agentId: selectedAgent, targetUrl }) });
       setLastAction(result.action);
+      setLiveFrame(result.action?.session?.screenshots?.[0] || null);
       applyState(result.state);
       showNotice('success', 'Action loop completed and refreshed agents.');
     } catch (error) {
@@ -133,6 +141,7 @@ function App() {
       applyState(await api('/memory', { method: 'DELETE' }));
       setChatHistory([]);
       setLastAction(null);
+      setLiveFrame(null);
       showNotice('success', 'Memory deleted.');
     } catch (error) {
       showNotice('error', `Unable to delete memory: ${error.message}`);
@@ -156,7 +165,7 @@ function App() {
         {notice && <div className={`notice ${notice.type}`} role="status">{notice.message}</div>}
         {section === 'Dashboard' && <Dashboard counts={counts} state={state} setSection={setSection} />}
         {section === 'Knowledge' && <Knowledge tabs={{ knowledgeTab, setKnowledgeTab }} state={state} form={enhanceForm} setForm={setEnhanceForm} onSubmit={submitEnhancement} />}
-        {section === 'Actions' && <Actions actionTab={actionTab} setActionTab={setActionTab} command={command} setCommand={setCommand} agents={state.agents} selectedAgent={selectedAgent} setSelectedAgent={setSelectedAgent} onRun={runActionLoop} lastAction={lastAction} logs={state.logs} stream={stream} targetUrl={targetUrl} setTargetUrl={setTargetUrl} chat={{ chatQuery, setChatQuery, sendChat, chatHistory, chatLoading }} />}
+        {section === 'Actions' && <Actions actionTab={actionTab} setActionTab={setActionTab} command={command} setCommand={setCommand} agents={state.agents} selectedAgent={selectedAgent} setSelectedAgent={setSelectedAgent} onRun={runActionLoop} lastAction={lastAction} liveFrame={liveFrame} logs={state.logs} stream={stream} targetUrl={targetUrl} setTargetUrl={setTargetUrl} chat={{ chatQuery, setChatQuery, sendChat, chatHistory, chatLoading }} />}
         {section === 'Memory' && <Memory state={state} onDeleteMemory={deleteMemory} />}
         {section === 'Sessions' && <Sessions sessions={state.sessions} />}
         {section === 'Agents' && <Agents agents={state.agents} tools={state.tools} agentForm={agentForm} setAgentForm={setAgentForm} onAddAgent={addAgent} />}
@@ -183,11 +192,21 @@ function Knowledge({ tabs, state, form, setForm, onSubmit }) {
 function GraphTab({ state }) {
   const featured = state.nodes.filter((node) => ['Workflow', 'Screen', 'BusinessRule', 'Action', 'Feature', 'Document', 'Insight'].includes(node.type)).slice(0, 34);
   const [selectedNode, setSelectedNode] = useState(featured[0] || null);
+  const [zoom, setZoom] = useState(1);
   useEffect(() => {
     if (!selectedNode && featured.length) setSelectedNode(featured[0]);
   }, [featured, selectedNode]);
   const selectedEdges = selectedNode ? state.edges.filter((edge) => edge.source === selectedNode.id || edge.target === selectedNode.id) : [];
-  return <div className="grid two"><section className="card wide"><h2><Network size={20} /> Interactive knowledge graph</h2><div className="graph-canvas">{featured.map((node, index) => <button type="button" className={`node node-${node.type.toLowerCase()} ${selectedNode?.id === node.id ? 'selected' : ''}`} style={{ '--i': index }} key={node.id} onClick={() => setSelectedNode(node)}><strong>{node.label}</strong><span>{node.type} · {Math.round((node.confidence || .7) * 100)}%</span></button>)}</div></section><section className="card node-detail"><h2>Selected knowledge node</h2>{selectedNode ? <><span>{selectedNode.type}</span><h3>{selectedNode.label}</h3><p>{selectedNode.content || 'No details captured yet.'}</p><small>ID: {selectedNode.id}</small><h4>Relationships</h4><div className="edge-list compact">{selectedEdges.length ? selectedEdges.map((edge) => <p key={edge.id}>{edge.source} <b>{edge.relationship}</b> {edge.target}</p>) : <p>No direct relationships.</p>}</div></> : <Empty title="No node selected" body="Click a graph node to inspect its memory details." />}</section><section className="card wide image-grid">{state.nodes.filter((node) => node.type === 'Screen' && node.src).map((image) => <figure key={image.id}><img src={image.src} alt={image.content} /><figcaption>{image.label}</figcaption></figure>)}</section></div>;
+  const selectedMindmap = selectedNode?.mindmap;
+  return <div className="grid two"><section className="card wide"><div className="section-heading"><h2><Network size={20} /> Interactive knowledge graph</h2><div className="zoom-controls"><button type="button" onClick={() => setZoom(Math.max(.65, zoom - .15))}>−</button><span>{Math.round(zoom * 100)}%</span><button type="button" onClick={() => setZoom(Math.min(1.8, zoom + .15))}>+</button></div></div><div className="graph-canvas zoomable"><div className="graph-surface" style={{ transform: `scale(${zoom})` }}>{featured.map((node, index) => <button type="button" className={`node node-${node.type.toLowerCase()} ${selectedNode?.id === node.id ? 'selected' : ''}`} style={{ '--i': index }} key={node.id} onClick={() => setSelectedNode(node)}><strong>{node.label}</strong><span>{node.type} · {Math.round((node.confidence || .7) * 100)}%</span></button>)}</div></div></section><section className="card node-detail"><h2>Selected knowledge node</h2>{selectedNode ? <><span>{selectedNode.type}</span><h3>{selectedNode.label}</h3><p>{selectedNode.content || 'No details captured yet.'}</p><small>ID: {selectedNode.id}</small>{selectedMindmap && <Mindmap node={selectedMindmap} />}<h4>Relationships</h4><div className="edge-list compact">{selectedEdges.length ? selectedEdges.map((edge) => <p key={edge.id}>{edge.source} <b>{edge.relationship}</b> {edge.target}</p>) : <p>No direct relationships.</p>}</div></> : <Empty title="No node selected" body="Click a graph node to inspect its memory details." />}</section><section className="card wide image-grid">{state.nodes.filter((node) => node.type === 'Screen' && node.src).map((image) => <figure key={image.id}><img src={image.src} alt={image.content} /><figcaption>{image.label}</figcaption></figure>)}</section></div>;
+}
+
+function Mindmap({ node }) {
+  return <div className="mindmap" aria-label="Readable memory mindmap"><MindmapBranch node={node} depth={0} /></div>;
+}
+
+function MindmapBranch({ node, depth }) {
+  return <article className="mindmap-branch" style={{ '--depth': depth }}><b>{node.label}</b>{node.description && <p>{node.description}</p>}{Boolean(node.children?.length) && <div>{node.children.map((child, index) => <MindmapBranch node={child} depth={depth + 1} key={`${child.label}-${index}`} />)}</div>}</article>;
 }
 
 function Memory({ state, onDeleteMemory }) {
@@ -198,12 +217,18 @@ function EnhanceTab({ form, setForm, onSubmit, logs }) {
   function onPaste(event) {
     const imageItem = [...event.clipboardData.items].find((item) => item.type.startsWith('image/'));
     if (!imageItem) return;
+    event.preventDefault();
     const file = imageItem.getAsFile();
     const reader = new FileReader();
-    reader.onload = () => setForm({ ...form, imageSrc: reader.result, imageAlt: form.imageAlt || 'Pasted UI image' });
+    reader.onload = () => setForm({
+      ...form,
+      imageSrc: reader.result,
+      imageAlt: form.imageAlt || 'Pasted UI image: analyze visible screens, controls, labels, state, and QA risks.',
+      content: form.content || 'Visual application capture pasted from clipboard. Parse this image into readable QA memory and a mindmap.'
+    });
     reader.readAsDataURL(file);
   }
-  return <div className="grid two"><section className="card"><h2><Upload size={20} /> Enhance application memory</h2><form className="stack" onSubmit={onSubmit}><label>Title<input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required /></label><label>Onboarding document / notes<textarea value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })} required rows="6" /></label><label>Paste image or add UI capture notes<textarea value={form.imageAlt} onPaste={onPaste} onChange={(e) => setForm({ ...form, imageAlt: e.target.value })} rows="3" placeholder="Paste an image here, or describe the screenshot." /></label>{form.imageSrc && <figure className="pasted-preview"><img src={form.imageSrc} alt={form.imageAlt || 'Pasted UI preview'} /><figcaption><ImagePlus size={14} /> Pasted image ready for ingestion</figcaption></figure>}<label>Business rule / clarification<textarea value={form.businessRule} onChange={(e) => setForm({ ...form, businessRule: e.target.value })} rows="3" /></label><button className="primary">Run ingestion pipeline</button></form></section><LogPanel logs={logs} /></div>;
+  return <div className="grid two"><section className="card"><h2><Upload size={20} /> Enhance application memory</h2><form className="stack" onSubmit={onSubmit}><label>Title<input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required /></label><label>Onboarding document / notes<textarea value={form.content} onPaste={onPaste} onChange={(e) => setForm({ ...form, content: e.target.value })} rows="6" placeholder="Type notes, or paste an image directly here to parse it into graph memory." /></label><label>Paste image or add UI capture notes<textarea value={form.imageAlt} onPaste={onPaste} onChange={(e) => setForm({ ...form, imageAlt: e.target.value })} rows="3" placeholder="Paste an image here, or describe the screenshot." /></label>{form.imageSrc && <figure className="pasted-preview"><img src={form.imageSrc} alt={form.imageAlt || 'Pasted UI preview'} /><figcaption><ImagePlus size={14} /> Pasted image will be parsed into a readable, zoomable mindmap node</figcaption></figure>}<label>Business rule / clarification<textarea value={form.businessRule} onChange={(e) => setForm({ ...form, businessRule: e.target.value })} rows="3" /></label><button className="primary">Run ingestion pipeline</button></form></section><LogPanel logs={logs} /></div>;
 }
 
 function Actions(props) {
@@ -211,8 +236,10 @@ function Actions(props) {
   return <section className="panel"><TabBar tabs={tabs} active={props.actionTab} onChange={props.setActionTab} />{props.actionTab === 'Act' ? <ActTab {...props} /> : <ChatTab {...props.chat} logs={props.logs} />}</section>;
 }
 
-function ActTab({ command, setCommand, targetUrl, setTargetUrl, agents, selectedAgent, setSelectedAgent, onRun, lastAction, logs, stream }) {
-  return <div className="execution-layout"><section className="card console"><h2><Play size={20} /> Operational execution console</h2><form onSubmit={onRun} className="stack"><label>High-level QA command<textarea value={command} onChange={(e) => setCommand(e.target.value)} rows="3" required /></label><label>Target application URL<input value={targetUrl} onChange={(e) => setTargetUrl(e.target.value)} placeholder="https://app.example.com" /></label><label>Agent<select value={selectedAgent} onChange={(e) => setSelectedAgent(e.target.value)} disabled={!agents.length}>{agents.length ? agents.map((agent) => <option value={agent.id} key={agent.id}>{agent.name}</option>) : <option>Loading agents…</option>}</select></label><button className="primary"><Zap size={16} /> Execute with live stream</button></form><h3>Live execution logs</h3><div className="terminal">{stream.map((event, index) => <p key={index}><b>{event.type}</b> {event.log?.message || event.message || event.session?.status || event.sessionId}</p>)}</div><LogPanel logs={logs} /></section><section className="card viewer"><h2>Live UI execution viewer</h2>{lastAction?.session?.screenshots?.[0]?.src ? <div className="browser-frame"><div className="browser-bar"><span /><span /><span /></div><img src={lastAction.session.screenshots[0].src} alt="Latest execution frame" /><div className="highlight">Captured frame</div></div> : <Empty title="No browser frame captured" body="Provide a reachable target URL and run an execution to stream real browser evidence." />}{lastAction && <pre>{lastAction.result}</pre>}</section></div>;
+function ActTab({ command, setCommand, targetUrl, setTargetUrl, agents, selectedAgent, setSelectedAgent, onRun, lastAction, liveFrame, logs, stream }) {
+  const frame = liveFrame || lastAction?.session?.screenshots?.[0];
+  const activeSession = stream.find((event) => event.sessionId)?.sessionId;
+  return <div className="execution-layout"><section className="card console"><h2><Play size={20} /> Operational execution console</h2><form onSubmit={onRun} className="stack"><label>High-level QA command<textarea value={command} onChange={(e) => setCommand(e.target.value)} rows="3" required /></label><label>Target application URL<input value={targetUrl} onChange={(e) => setTargetUrl(e.target.value)} placeholder="https://app.example.com" /></label><label>Agent<select value={selectedAgent} onChange={(e) => setSelectedAgent(e.target.value)} disabled={!agents.length}>{agents.length ? agents.map((agent) => <option value={agent.id} key={agent.id}>{agent.name}</option>) : <option>Loading agents…</option>}</select></label><button className="primary"><Zap size={16} /> Execute with live stream</button></form><h3>Live execution logs</h3><div className="terminal">{stream.map((event, index) => <p key={index}><b>{event.type}</b> {event.frame?.label || event.log?.message || event.message || event.session?.status || event.sessionId}</p>)}</div><LogPanel logs={logs} /></section><section className="card viewer"><div className="section-heading"><h2>Live UI execution viewer</h2>{activeSession && <span className="live-pill"><span className="pulse" /> {frame ? 'Streaming frames' : 'Waiting for frame'}</span>}</div>{frame?.src ? <div className="browser-frame live"><div className="browser-bar"><span /><span /><span /><small>{frame.url || frame.label}</small></div><img src={frame.src} alt={frame.label || 'Latest live execution frame'} /><div className="highlight">{frame.stepLabel || 'Live frame'}</div></div> : <Empty title="No live browser frame yet" body="When the agent navigates or acts, screenshots stream here immediately instead of waiting for the final captured image." />}{lastAction && <pre>{lastAction.result}</pre>}</section></div>;
 }
 
 function ChatTab({ chatQuery, setChatQuery, sendChat, chatHistory, logs, chatLoading }) {

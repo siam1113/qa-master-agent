@@ -14,10 +14,15 @@ export function createGraphRouter({ executionEngine } = {}) {
     response.json(withRegistries());
   });
 
-  graphRouter.post('/enhance', (request, response) => {
-    const { title, content, imageAlt, imageSrc, businessRule } = request.body;
-    if (!title?.trim() || !content?.trim()) return response.status(400).json({ error: 'Title and content are required.' });
-    response.json(withRegistries(knowledgeGraph.enhanceKnowledge({ title, content, imageAlt, imageSrc, businessRule })));
+  graphRouter.post('/enhance', async (request, response, next) => {
+    try {
+      const { title, content = '', imageAlt = '', imageSrc = '', businessRule } = request.body;
+      if (!title?.trim()) return response.status(400).json({ error: 'Title is required.' });
+      if (!content?.trim() && !imageAlt?.trim() && !imageSrc?.trim()) return response.status(400).json({ error: 'Add notes or paste an image to ingest.' });
+      response.json(withRegistries(await knowledgeGraph.enhanceKnowledge({ title, content, imageAlt, imageSrc, businessRule })));
+    } catch (error) {
+      next(error);
+    }
   });
 
   graphRouter.post('/act', async (request, response, next) => {

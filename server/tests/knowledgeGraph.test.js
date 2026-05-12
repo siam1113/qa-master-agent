@@ -32,7 +32,7 @@ const clientChatState = withRegistries(chatResult.state);
 assert.deepEqual(clientChatState.agents, agentRegistry.list(), 'chat responses should keep agent dropdown options populated');
 assert.deepEqual(clientChatState.tools, toolRegistry.list('*'), 'chat responses should keep tool registry data populated');
 
-const enhanced = graph.enhanceKnowledge({
+const enhanced = await graph.enhanceKnowledge({
   title: 'Profile onboarding',
   content: 'Profile editing requires avatar upload, display name validation, and save confirmation.',
   imageAlt: 'Profile page with avatar upload and save button.',
@@ -42,6 +42,15 @@ const enhanced = graph.enhanceKnowledge({
 assert.ok(enhanced.nodes.some((node) => node.label === 'Profile onboarding'), 'enhance should add the new document node');
 assert.ok(enhanced.nodes.some((node) => node.type === 'Screen' && node.src === 'data:image/png;base64,BBBB'), 'enhance should ingest pasted image data URLs');
 assert.ok(enhanced.memoryVersions[0].reason === 'ingestion', 'enhance should version memory');
+
+const imageOnly = await graph.enhanceKnowledge({
+  title: 'Image-only checkout capture',
+  imageAlt: 'Checkout screen with promo field, pay button, and order summary.',
+  imageSrc: 'data:image/png;base64,CCCC'
+});
+const parsedScreen = imageOnly.nodes.find((node) => node.type === 'Screen' && node.src === 'data:image/png;base64,CCCC');
+assert.ok(parsedScreen?.mindmap?.label, 'image-only ingestion should parse pasted images into readable mindmap memory');
+assert.ok(parsedScreen.content.includes('Checkout') || parsedScreen.content.includes('checkout'), 'parsed image nodes should contain user-readable text');
 
 const addedAgent = agentRegistry.add({ name: 'Accessibility QA Agent', scope: 'a11y', strategy: 'screen-reader first validation', tools: ['dom.extract'] });
 assert.equal(agentRegistry.get(addedAgent.id).name, 'Accessibility QA Agent', 'users should be able to add custom agents');
