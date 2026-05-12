@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360">
+  <rect width="640" height="360" fill="#f5f3ff"/>
+  <text x="48" y="58" font-family="Arial" font-size="28" fill="#4c1d95">Checkout Review</text>
+  <rect x="48" y="88" width="250" height="210" rx="18" fill="#ffffff" stroke="#c4b5fd"/>
+  <text x="75" y="135" font-family="Arial" font-size="18" fill="#5b21b6">Cart + Promo</text>
+  <rect x="75" y="162" width="190" height="36" rx="8" fill="#ede9fe"/>
+  <text x="88" y="185" font-family="Arial" font-size="13" fill="#6d28d9">SAVE10 validation</text>
+  <rect x="340" y="88" width="250" height="210" rx="18" fill="#ffffff" stroke="#c4b5fd"/>
+  <text x="370" y="135" font-family="Arial" font-size="18" fill="#5b21b6">Payment + Receipt</text>
+  <circle cx="465" cy="210" r="38" fill="#22c55e"/>
+  <text x="449" y="218" font-family="Arial" font-size="24" fill="#ffffff">✓</text>
+</svg>
