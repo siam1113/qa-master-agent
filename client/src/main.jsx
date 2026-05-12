@@ -8,7 +8,17 @@ const WS_BASE = (import.meta.env.VITE_WS_BASE || API_BASE.replace(/^http/, 'ws')
 
 async function api(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, { headers: { 'Content-Type': 'application/json' }, ...options });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) {
+    const text = await response.text();
+    let message = text;
+    try {
+      const payload = JSON.parse(text);
+      message = payload.message || payload.error || text;
+    } catch {
+      message = text;
+    }
+    throw new Error(message || `Request failed with status ${response.status}`);
+  }
   return response.json();
 }
 
@@ -25,8 +35,12 @@ function App() {
   const [enhanceForm, setEnhanceForm] = useState({ title: '', content: '', imageAlt: '', businessRule: '' });
   const [stream, setStream] = useState([{ type: 'system', message: 'Waiting for live execution stream…' }]);
   const [lastAction, setLastAction] = useState(null);
+  const [notice, setNotice] = useState(null);
 
   useEffect(() => { refresh(); }, []);
+  useEffect(() => {
+    if (state.agents.length && !state.agents.some((agent) => agent.id === selectedAgent)) setSelectedAgent(state.agents[0].id);
+  }, [state.agents, selectedAgent]);
   useEffect(() => {
     const socket = new WebSocket(`${WS_BASE}/ws/executions`);
     socket.onmessage = (event) => setStream((items) => [JSON.parse(event.data), ...items].slice(0, 60));
@@ -34,24 +48,56 @@ function App() {
     return () => socket.close();
   }, []);
 
-  async function refresh() { setState(await api('/graph')); }
+  function applyState(nextState) {
+    setState((previous) => ({
+      ...nextState,
+      agents: nextState?.agents?.length ? nextState.agents : previous.agents,
+      tools: nextState?.tools?.length ? nextState.tools : previous.tools
+    }));
+  }
+  function showNotice(type, message) { setNotice({ type, message }); }
+  async function refresh() {
+    try {
+      applyState(await api('/graph'));
+      setNotice(null);
+    } catch (error) {
+      showNotice('error', `Unable to load application state: ${error.message}`);
+    }
+  }
   async function submitEnhancement(event) {
     event.preventDefault();
-    setState(await api('/enhance', { method: 'POST', body: JSON.stringify(enhanceForm) }));
-    setEnhanceForm({ title: '', content: '', imageAlt: '', businessRule: '' });
+    try {
+      applyState(await api('/enhance', { method: 'POST', body: JSON.stringify(enhanceForm) }));
+      setEnhanceForm({ title: '', content: '', imageAlt: '', businessRule: '' });
+      showNotice('success', 'Application memory was updated.');
+    } catch (error) {
+      showNotice('error', `Knowledge ingestion failed: ${error.message}`);
+    }
   }
   async function runActionLoop(event) {
     event.preventDefault();
-    const result = await api('/act', { method: 'POST', body: JSON.stringify({ command, agentId: selectedAgent, targetUrl }) });
-    setLastAction(result.action);
-    setState(result.state);
+    try {
+      const result = await api('/act', { method: 'POST', body: JSON.stringify({ command, agentId: selectedAgent, targetUrl }) });
+      setLastAction(result.action);
+      applyState(result.state);
+      showNotice('success', 'Action loop completed and refreshed agents.');
+    } catch (error) {
+      showNotice('error', `Action loop failed: ${error.message}`);
+    }
   }
   async function sendChat(event) {
     event.preventDefault();
-    const result = await api('/chat', { method: 'POST', body: JSON.stringify({ query: chatQuery }) });
-    setChatHistory((history) => [{ query: chatQuery, answer: result.answer, matches: result.matches }, ...history]);
-    setState(result.state);
-    setChatQuery('');
+    const query = chatQuery.trim();
+    if (!query) return;
+    try {
+      const result = await api('/chat', { method: 'POST', body: JSON.stringify({ query }) });
+      setChatHistory((history) => [{ query, answer: result.answer, matches: result.matches || [] }, ...history]);
+      applyState(result.state);
+      setChatQuery('');
+      showNotice('success', 'Chat answer generated from memory.');
+    } catch (error) {
+      showNotice('error', `Chat failed: ${error.message}`);
+    }
   }
 
   const counts = useMemo(() => state.nodes.reduce((acc, node) => ({ ...acc, [node.type]: (acc[node.type] || 0) + 1 }), {}), [state.nodes]);
@@ -68,6 +114,7 @@ function App() {
           <div><p className="eyebrow">Operational AI QA platform</p><h1>{section}</h1></div>
           <div className="status"><span className="pulse" /> Live memory · {state.memoryVersions.length || 0} versions</div>
         </header>
+        {notice && <div className={`notice ${notice.type}`} role="status">{notice.message}</div>}
         {section === 'Dashboard' && <Dashboard counts={counts} state={state} setSection={setSection} />}
         {section === 'Knowledge' && <Knowledge tabs={{ knowledgeTab, setKnowledgeTab }} state={state} form={enhanceForm} setForm={setEnhanceForm} onSubmit={submitEnhancement} />}
         {section === 'Actions' && <Actions actionTab={actionTab} setActionTab={setActionTab} command={command} setCommand={setCommand} agents={state.agents} selectedAgent={selectedAgent} setSelectedAgent={setSelectedAgent} onRun={runActionLoop} lastAction={lastAction} logs={state.logs} stream={stream} targetUrl={targetUrl} setTargetUrl={setTargetUrl} chat={{ chatQuery, setChatQuery, sendChat, chatHistory }} />}
@@ -113,7 +160,7 @@ function Actions(props) {
 }
 
 function ActTab({ command, setCommand, targetUrl, setTargetUrl, agents, selectedAgent, setSelectedAgent, onRun, lastAction, logs, stream }) {
-  return <div className="execution-layout"><section className="card console"><h2><Play size={20} /> Operational execution console</h2><form onSubmit={onRun} className="stack"><label>High-level QA command<textarea value={command} onChange={(e) => setCommand(e.target.value)} rows="3" required /></label><label>Target application URL<input value={targetUrl} onChange={(e) => setTargetUrl(e.target.value)} placeholder="https://app.example.com" /></label><label>Agent<select value={selectedAgent} onChange={(e) => setSelectedAgent(e.target.value)}>{agents.map((agent) => <option value={agent.id} key={agent.id}>{agent.name}</option>)}</select></label><button className="primary"><Zap size={16} /> Execute with live stream</button></form><h3>Live execution logs</h3><div className="terminal">{stream.map((event, index) => <p key={index}><b>{event.type}</b> {event.log?.message || event.message || event.session?.status || event.sessionId}</p>)}</div><LogPanel logs={logs} /></section><section className="card viewer"><h2>Live UI execution viewer</h2>{lastAction?.session?.screenshots?.[0]?.src ? <div className="browser-frame"><div className="browser-bar"><span /><span /><span /></div><img src={lastAction.session.screenshots[0].src} alt="Latest execution frame" /><div className="highlight">Captured frame</div></div> : <Empty title="No browser frame captured" body="Provide a reachable target URL and run an execution to stream real browser evidence." />}{lastAction && <pre>{lastAction.result}</pre>}</section></div>;
+  return <div className="execution-layout"><section className="card console"><h2><Play size={20} /> Operational execution console</h2><form onSubmit={onRun} className="stack"><label>High-level QA command<textarea value={command} onChange={(e) => setCommand(e.target.value)} rows="3" required /></label><label>Target application URL<input value={targetUrl} onChange={(e) => setTargetUrl(e.target.value)} placeholder="https://app.example.com" /></label><label>Agent<select value={selectedAgent} onChange={(e) => setSelectedAgent(e.target.value)} disabled={!agents.length}>{agents.length ? agents.map((agent) => <option value={agent.id} key={agent.id}>{agent.name}</option>) : <option>Loading agents…</option>}</select></label><button className="primary"><Zap size={16} /> Execute with live stream</button></form><h3>Live execution logs</h3><div className="terminal">{stream.map((event, index) => <p key={index}><b>{event.type}</b> {event.log?.message || event.message || event.session?.status || event.sessionId}</p>)}</div><LogPanel logs={logs} /></section><section className="card viewer"><h2>Live UI execution viewer</h2>{lastAction?.session?.screenshots?.[0]?.src ? <div className="browser-frame"><div className="browser-bar"><span /><span /><span /></div><img src={lastAction.session.screenshots[0].src} alt="Latest execution frame" /><div className="highlight">Captured frame</div></div> : <Empty title="No browser frame captured" body="Provide a reachable target URL and run an execution to stream real browser evidence." />}{lastAction && <pre>{lastAction.result}</pre>}</section></div>;
 }
 
 function ChatTab({ chatQuery, setChatQuery, sendChat, chatHistory, logs }) {

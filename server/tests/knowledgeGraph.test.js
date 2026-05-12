@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { KnowledgeGraphService } from '../services/knowledgeGraph.js';
 import { agentRegistry } from '../services/agentRegistry.js';
+import { toolRegistry } from '../services/toolRegistry.js';
+import { withRegistries } from '../routes/graphRoutes.js';
 
 const graph = new KnowledgeGraphService();
 graph.seedFixtures();
@@ -26,6 +28,9 @@ assert.ok(graph.getState().memoryVersions[0].reason === 'execution', 'execution 
 const chatResult = await graph.chat('What validations exist for promo code checkout?');
 assert.ok(chatResult.answer.includes('Memory evidence') || chatResult.answer.length > 0, 'chat should answer with graph-backed matches');
 assert.ok(chatResult.matches.length > 0, 'chat should cite matched memory nodes');
+const clientChatState = withRegistries(chatResult.state);
+assert.deepEqual(clientChatState.agents, agentRegistry.list(), 'chat responses should keep agent dropdown options populated');
+assert.deepEqual(clientChatState.tools, toolRegistry.list('*'), 'chat responses should keep tool registry data populated');
 
 const enhanced = graph.enhanceKnowledge({
   title: 'Profile onboarding',

@@ -3,18 +3,21 @@ import { knowledgeGraph } from '../services/knowledgeGraph.js';
 import { agentRegistry } from '../services/agentRegistry.js';
 import { toolRegistry } from '../services/toolRegistry.js';
 
+export function withRegistries(state = knowledgeGraph.getState()) {
+  return { ...state, agents: agentRegistry.list(), tools: toolRegistry.list('*') };
+}
+
 export function createGraphRouter({ executionEngine } = {}) {
   const graphRouter = express.Router();
 
   graphRouter.get('/graph', (_request, response) => {
-    const state = knowledgeGraph.getState();
-    response.json({ ...state, agents: agentRegistry.list(), tools: toolRegistry.list('*') });
+    response.json(withRegistries());
   });
 
   graphRouter.post('/enhance', (request, response) => {
     const { title, content, imageAlt, businessRule } = request.body;
     if (!title?.trim() || !content?.trim()) return response.status(400).json({ error: 'Title and content are required.' });
-    response.json(knowledgeGraph.enhanceKnowledge({ title, content, imageAlt, businessRule }));
+    response.json(withRegistries(knowledgeGraph.enhanceKnowledge({ title, content, imageAlt, businessRule })));
   });
 
   graphRouter.post('/act', async (request, response, next) => {
@@ -22,7 +25,7 @@ export function createGraphRouter({ executionEngine } = {}) {
       const { command, agentId = 'agent-exploratory-qa', targetUrl, browserName } = request.body || {};
       if (!command?.trim()) return response.status(400).json({ error: 'Command is required.' });
       const result = await executionEngine.run({ command, agentId, targetUrl, browserName });
-      response.json(result);
+      response.json({ ...result, state: withRegistries(result.state) });
     } catch (error) {
       next(error);
     }
@@ -32,7 +35,8 @@ export function createGraphRouter({ executionEngine } = {}) {
     try {
       const { query } = request.body;
       if (!query?.trim()) return response.status(400).json({ error: 'Query is required.' });
-      response.json(await knowledgeGraph.chat(query));
+      const result = await knowledgeGraph.chat(query);
+      response.json({ ...result, state: withRegistries(result.state) });
     } catch (error) {
       next(error);
     }
