@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Activity, Bot, Brain, Database, GitBranch, MessageSquare, Network, Play, Settings, Shield, Upload, Workflow, Zap } from 'lucide-react';
+import { Activity, Bot, Brain, Database, GitBranch, ImagePlus, MessageSquare, Network, Play, Settings, Shield, Trash2, Upload, Workflow, Zap } from 'lucide-react';
 import './styles.css';
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:5050/api';
 const WS_BASE = (import.meta.env.VITE_WS_BASE || API_BASE.replace(/^http/, 'ws').replace(/\/api$/, '')).replace(/\/$/, '');
+const emptyAgentForm = { name: '', scope: 'qa', strategy: '', tools: 'dom.extract, mcp.registry.describe' };
 
 async function api(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, { headers: { 'Content-Type': 'application/json' }, ...options });
@@ -29,10 +30,12 @@ function App() {
   const [state, setState] = useState({ nodes: [], edges: [], logs: [], memoryInsights: [], memoryVersions: [], sessions: [], agents: [], tools: [] });
   const [chatHistory, setChatHistory] = useState([]);
   const [chatQuery, setChatQuery] = useState('');
+  const [chatLoading, setChatLoading] = useState(false);
   const [command, setCommand] = useState('Validate the critical workflow in the configured application');
   const [targetUrl, setTargetUrl] = useState(import.meta.env.VITE_EXECUTION_BASE_URL || '');
   const [selectedAgent, setSelectedAgent] = useState('agent-exploratory-qa');
-  const [enhanceForm, setEnhanceForm] = useState({ title: '', content: '', imageAlt: '', businessRule: '' });
+  const [enhanceForm, setEnhanceForm] = useState({ title: '', content: '', imageAlt: '', imageSrc: '', businessRule: '' });
+  const [agentForm, setAgentForm] = useState(emptyAgentForm);
   const [stream, setStream] = useState([{ type: 'system', message: 'Waiting for live execution stream…' }]);
   const [lastAction, setLastAction] = useState(null);
   const [notice, setNotice] = useState(null);
@@ -43,7 +46,7 @@ function App() {
   }, [state.agents, selectedAgent]);
   useEffect(() => {
     const socket = new WebSocket(`${WS_BASE}/ws/executions`);
-    socket.onmessage = (event) => setStream((items) => [JSON.parse(event.data), ...items].slice(0, 60));
+    socket.onmessage = (event) => setStream((items) => [JSON.parse(event.data), ...items].slice(0, 80));
     socket.onerror = () => setStream((items) => [{ type: 'warning', message: 'WebSocket unavailable; REST execution still works.' }, ...items]);
     return () => socket.close();
   }, []);
@@ -55,7 +58,9 @@ function App() {
       tools: nextState?.tools?.length ? nextState.tools : previous.tools
     }));
   }
+
   function showNotice(type, message) { setNotice({ type, message }); }
+
   async function refresh() {
     try {
       applyState(await api('/graph'));
@@ -64,16 +69,18 @@ function App() {
       showNotice('error', `Unable to load application state: ${error.message}`);
     }
   }
+
   async function submitEnhancement(event) {
     event.preventDefault();
     try {
       applyState(await api('/enhance', { method: 'POST', body: JSON.stringify(enhanceForm) }));
-      setEnhanceForm({ title: '', content: '', imageAlt: '', businessRule: '' });
+      setEnhanceForm({ title: '', content: '', imageAlt: '', imageSrc: '', businessRule: '' });
       showNotice('success', 'Application memory was updated.');
     } catch (error) {
       showNotice('error', `Knowledge ingestion failed: ${error.message}`);
     }
   }
+
   async function runActionLoop(event) {
     event.preventDefault();
     try {
@@ -85,10 +92,12 @@ function App() {
       showNotice('error', `Action loop failed: ${error.message}`);
     }
   }
+
   async function sendChat(event) {
     event.preventDefault();
     const query = chatQuery.trim();
-    if (!query) return;
+    if (!query || chatLoading) return;
+    setChatLoading(true);
     try {
       const result = await api('/chat', { method: 'POST', body: JSON.stringify({ query }) });
       setChatHistory((history) => [{ query, answer: result.answer, matches: result.matches || [] }, ...history]);
@@ -97,6 +106,36 @@ function App() {
       showNotice('success', 'Chat answer generated from memory.');
     } catch (error) {
       showNotice('error', `Chat failed: ${error.message}`);
+    } finally {
+      setChatLoading(false);
+    }
+  }
+
+  async function addAgent(event) {
+    event.preventDefault();
+    try {
+      const result = await api('/agents', {
+        method: 'POST',
+        body: JSON.stringify({ ...agentForm, tools: agentForm.tools.split(',').map((tool) => tool.trim()).filter(Boolean) })
+      });
+      applyState(result.state);
+      setSelectedAgent(result.agent.id);
+      setAgentForm(emptyAgentForm);
+      showNotice('success', `Agent "${result.agent.name}" was added.`);
+    } catch (error) {
+      showNotice('error', `Unable to add agent: ${error.message}`);
+    }
+  }
+
+  async function deleteMemory() {
+    if (!window.confirm('Delete all graph memory, versions, sessions, and insights?')) return;
+    try {
+      applyState(await api('/memory', { method: 'DELETE' }));
+      setChatHistory([]);
+      setLastAction(null);
+      showNotice('success', 'Memory deleted.');
+    } catch (error) {
+      showNotice('error', `Unable to delete memory: ${error.message}`);
     }
   }
 
@@ -117,10 +156,10 @@ function App() {
         {notice && <div className={`notice ${notice.type}`} role="status">{notice.message}</div>}
         {section === 'Dashboard' && <Dashboard counts={counts} state={state} setSection={setSection} />}
         {section === 'Knowledge' && <Knowledge tabs={{ knowledgeTab, setKnowledgeTab }} state={state} form={enhanceForm} setForm={setEnhanceForm} onSubmit={submitEnhancement} />}
-        {section === 'Actions' && <Actions actionTab={actionTab} setActionTab={setActionTab} command={command} setCommand={setCommand} agents={state.agents} selectedAgent={selectedAgent} setSelectedAgent={setSelectedAgent} onRun={runActionLoop} lastAction={lastAction} logs={state.logs} stream={stream} targetUrl={targetUrl} setTargetUrl={setTargetUrl} chat={{ chatQuery, setChatQuery, sendChat, chatHistory }} />}
-        {section === 'Memory' && <Memory state={state} />}
+        {section === 'Actions' && <Actions actionTab={actionTab} setActionTab={setActionTab} command={command} setCommand={setCommand} agents={state.agents} selectedAgent={selectedAgent} setSelectedAgent={setSelectedAgent} onRun={runActionLoop} lastAction={lastAction} logs={state.logs} stream={stream} targetUrl={targetUrl} setTargetUrl={setTargetUrl} chat={{ chatQuery, setChatQuery, sendChat, chatHistory, chatLoading }} />}
+        {section === 'Memory' && <Memory state={state} onDeleteMemory={deleteMemory} />}
         {section === 'Sessions' && <Sessions sessions={state.sessions} />}
-        {section === 'Agents' && <Agents agents={state.agents} tools={state.tools} />}
+        {section === 'Agents' && <Agents agents={state.agents} tools={state.tools} agentForm={agentForm} setAgentForm={setAgentForm} onAddAgent={addAgent} />}
         {section === 'Settings' && <SettingsPanel />}
       </main>
     </div>
@@ -142,16 +181,29 @@ function Knowledge({ tabs, state, form, setForm, onSubmit }) {
 }
 
 function GraphTab({ state }) {
-  const featured = state.nodes.filter((node) => ['Workflow', 'Screen', 'BusinessRule', 'Action', 'Feature'].includes(node.type)).slice(0, 34);
-  return <div className="grid two"><section className="card wide"><h2><Network size={20} /> Interactive knowledge graph</h2><div className="graph-canvas">{featured.map((node, index) => <article className={`node node-${node.type.toLowerCase()}`} style={{ '--i': index }} key={node.id}><strong>{node.label}</strong><span>{node.type} · {Math.round((node.confidence || .7) * 100)}%</span></article>)}</div></section><section className="card"><h2>Relationship trace</h2><div className="edge-list">{state.edges.slice(0, 28).map((edge) => <p key={edge.id}>{edge.source} <b>{edge.relationship}</b> {edge.target}</p>)}</div></section><section className="card wide image-grid">{state.nodes.filter((node) => node.type === 'Screen' && node.src).map((image) => <figure key={image.id}><img src={image.src} alt={image.content} /><figcaption>{image.label}</figcaption></figure>)}</section></div>;
+  const featured = state.nodes.filter((node) => ['Workflow', 'Screen', 'BusinessRule', 'Action', 'Feature', 'Document', 'Insight'].includes(node.type)).slice(0, 34);
+  const [selectedNode, setSelectedNode] = useState(featured[0] || null);
+  useEffect(() => {
+    if (!selectedNode && featured.length) setSelectedNode(featured[0]);
+  }, [featured, selectedNode]);
+  const selectedEdges = selectedNode ? state.edges.filter((edge) => edge.source === selectedNode.id || edge.target === selectedNode.id) : [];
+  return <div className="grid two"><section className="card wide"><h2><Network size={20} /> Interactive knowledge graph</h2><div className="graph-canvas">{featured.map((node, index) => <button type="button" className={`node node-${node.type.toLowerCase()} ${selectedNode?.id === node.id ? 'selected' : ''}`} style={{ '--i': index }} key={node.id} onClick={() => setSelectedNode(node)}><strong>{node.label}</strong><span>{node.type} · {Math.round((node.confidence || .7) * 100)}%</span></button>)}</div></section><section className="card node-detail"><h2>Selected knowledge node</h2>{selectedNode ? <><span>{selectedNode.type}</span><h3>{selectedNode.label}</h3><p>{selectedNode.content || 'No details captured yet.'}</p><small>ID: {selectedNode.id}</small><h4>Relationships</h4><div className="edge-list compact">{selectedEdges.length ? selectedEdges.map((edge) => <p key={edge.id}>{edge.source} <b>{edge.relationship}</b> {edge.target}</p>) : <p>No direct relationships.</p>}</div></> : <Empty title="No node selected" body="Click a graph node to inspect its memory details." />}</section><section className="card wide image-grid">{state.nodes.filter((node) => node.type === 'Screen' && node.src).map((image) => <figure key={image.id}><img src={image.src} alt={image.content} /><figcaption>{image.label}</figcaption></figure>)}</section></div>;
 }
 
-function Memory({ state }) {
-  return <div className="grid two"><VersionPanel versions={state.memoryVersions} /><section className="card"><h2><GitBranch size={20} /> Memory lineage and refinements</h2>{state.memoryInsights.map((insight) => <article className="timeline-item" key={insight.id}><time>{new Date(insight.timestamp).toLocaleString()}</time><p>{insight.message}</p><span>{insight.graphSize} nodes · confidence {Math.round((insight.confidence || 0) * 100)}% · {(insight.tags || []).join(', ')}</span></article>)}</section></div>;
+function Memory({ state, onDeleteMemory }) {
+  return <div className="grid two"><section className="card memory-actions"><h2><Brain size={20} /> Memory controls</h2><p>Delete memory when you need a clean graph, empty sessions, and fresh version lineage.</p>{onDeleteMemory && <button className="danger" onClick={onDeleteMemory}><Trash2 size={16} /> Delete memory</button>}</section><VersionPanel versions={state.memoryVersions} /><section className="card wide"><h2><GitBranch size={20} /> Memory lineage and refinements</h2>{state.memoryInsights.map((insight) => <article className="timeline-item" key={insight.id}><time>{new Date(insight.timestamp).toLocaleString()}</time><p>{insight.message}</p><span>{insight.graphSize} nodes · confidence {Math.round((insight.confidence || 0) * 100)}% · {(insight.tags || []).join(', ')}</span></article>)}</section></div>;
 }
 
 function EnhanceTab({ form, setForm, onSubmit, logs }) {
-  return <div className="grid two"><section className="card"><h2><Upload size={20} /> Enhance application memory</h2><form className="stack" onSubmit={onSubmit}><label>Title<input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required /></label><label>Onboarding document / notes<textarea value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })} required rows="6" /></label><label>Screenshot or UI capture notes<textarea value={form.imageAlt} onChange={(e) => setForm({ ...form, imageAlt: e.target.value })} rows="3" /></label><label>Business rule / clarification<textarea value={form.businessRule} onChange={(e) => setForm({ ...form, businessRule: e.target.value })} rows="3" /></label><button className="primary">Run ingestion pipeline</button></form></section><LogPanel logs={logs} /></div>;
+  function onPaste(event) {
+    const imageItem = [...event.clipboardData.items].find((item) => item.type.startsWith('image/'));
+    if (!imageItem) return;
+    const file = imageItem.getAsFile();
+    const reader = new FileReader();
+    reader.onload = () => setForm({ ...form, imageSrc: reader.result, imageAlt: form.imageAlt || 'Pasted UI image' });
+    reader.readAsDataURL(file);
+  }
+  return <div className="grid two"><section className="card"><h2><Upload size={20} /> Enhance application memory</h2><form className="stack" onSubmit={onSubmit}><label>Title<input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required /></label><label>Onboarding document / notes<textarea value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })} required rows="6" /></label><label>Paste image or add UI capture notes<textarea value={form.imageAlt} onPaste={onPaste} onChange={(e) => setForm({ ...form, imageAlt: e.target.value })} rows="3" placeholder="Paste an image here, or describe the screenshot." /></label>{form.imageSrc && <figure className="pasted-preview"><img src={form.imageSrc} alt={form.imageAlt || 'Pasted UI preview'} /><figcaption><ImagePlus size={14} /> Pasted image ready for ingestion</figcaption></figure>}<label>Business rule / clarification<textarea value={form.businessRule} onChange={(e) => setForm({ ...form, businessRule: e.target.value })} rows="3" /></label><button className="primary">Run ingestion pipeline</button></form></section><LogPanel logs={logs} /></div>;
 }
 
 function Actions(props) {
@@ -163,16 +215,16 @@ function ActTab({ command, setCommand, targetUrl, setTargetUrl, agents, selected
   return <div className="execution-layout"><section className="card console"><h2><Play size={20} /> Operational execution console</h2><form onSubmit={onRun} className="stack"><label>High-level QA command<textarea value={command} onChange={(e) => setCommand(e.target.value)} rows="3" required /></label><label>Target application URL<input value={targetUrl} onChange={(e) => setTargetUrl(e.target.value)} placeholder="https://app.example.com" /></label><label>Agent<select value={selectedAgent} onChange={(e) => setSelectedAgent(e.target.value)} disabled={!agents.length}>{agents.length ? agents.map((agent) => <option value={agent.id} key={agent.id}>{agent.name}</option>) : <option>Loading agents…</option>}</select></label><button className="primary"><Zap size={16} /> Execute with live stream</button></form><h3>Live execution logs</h3><div className="terminal">{stream.map((event, index) => <p key={index}><b>{event.type}</b> {event.log?.message || event.message || event.session?.status || event.sessionId}</p>)}</div><LogPanel logs={logs} /></section><section className="card viewer"><h2>Live UI execution viewer</h2>{lastAction?.session?.screenshots?.[0]?.src ? <div className="browser-frame"><div className="browser-bar"><span /><span /><span /></div><img src={lastAction.session.screenshots[0].src} alt="Latest execution frame" /><div className="highlight">Captured frame</div></div> : <Empty title="No browser frame captured" body="Provide a reachable target URL and run an execution to stream real browser evidence." />}{lastAction && <pre>{lastAction.result}</pre>}</section></div>;
 }
 
-function ChatTab({ chatQuery, setChatQuery, sendChat, chatHistory, logs }) {
-  return <div className="grid two"><section className="card"><h2><MessageSquare size={20} /> Memory-backed agent chat</h2><form className="chat-form" onSubmit={sendChat}><input value={chatQuery} onChange={(e) => setChatQuery(e.target.value)} placeholder="Ask about workflows, validations, recurring failures…" required /><button className="primary"><Bot size={16} /> Ask</button></form><div className="chat-history">{chatHistory.map((item, index) => <article key={index}><b>You:</b> {item.query}<p><b>Agent:</b> {item.answer}</p><small>Sources: {item.matches.map((match) => match.label).join(', ')}</small></article>)}</div></section><LogPanel logs={logs} /></div>;
+function ChatTab({ chatQuery, setChatQuery, sendChat, chatHistory, logs, chatLoading }) {
+  return <div className="grid two"><section className="card chat-card"><h2><MessageSquare size={20} /> Memory-backed agent chat</h2><form className="chat-form" onSubmit={sendChat}><input value={chatQuery} onChange={(e) => setChatQuery(e.target.value)} placeholder="Ask about workflows, validations, recurring failures…" required disabled={chatLoading} /><button className="primary" disabled={chatLoading}>{chatLoading ? 'Thinking…' : <><Bot size={16} /> Ask</>}</button></form>{chatLoading && <div className="chat-loader" role="status"><span /> Generating answer from graph memory…</div>}<div className="chat-history">{chatHistory.map((item, index) => <article key={index}><b>You:</b> {item.query}<p><b>Agent:</b> {item.answer}</p><small>Sources: {item.matches.map((match) => match.label).join(', ') || 'None'}</small></article>)}</div></section><LogPanel logs={logs} /></div>;
 }
 
 function Sessions({ sessions }) {
   return <section className="grid two">{sessions.length ? sessions.map((session) => <article className="card" key={session.id}><h2>{session.command}</h2><p><b>Status:</b> {session.status}</p><p><b>Agent:</b> {session.agent}</p><p><b>Memory refs:</b> {session.memoryReferences.join(', ') || 'None'}</p><details><summary>Replay logs</summary>{session.logs.map((log) => <p key={log.id}>{log.category}: {log.message}</p>)}</details></article>) : <Empty title="No sessions yet" body="Run an action to create a replayable execution session." />}</section>;
 }
 
-function Agents({ agents, tools }) {
-  return <div className="grid two"><section className="card"><h2><Bot size={20} /> Specialized agents</h2>{agents.map((agent) => <article className="timeline-item" key={agent.id}><b>{agent.name}</b><p>{agent.strategy}</p><span>Scope: {agent.scope} · Tools: {agent.tools.join(', ')}</span></article>)}</section><section className="card"><h2><Database size={20} /> MCP-compatible tool registry</h2>{tools.map((tool) => <article className="timeline-item" key={tool.name}><b>{tool.name}</b><p>{tool.description}</p><span>{tool.permissions.join(', ')}</span></article>)}</section></div>;
+function Agents({ agents, tools, agentForm, setAgentForm, onAddAgent }) {
+  return <div className="grid two"><section className="card"><h2><Bot size={20} /> Add an agent</h2><form className="stack" onSubmit={onAddAgent}><label>Name<input value={agentForm.name} onChange={(e) => setAgentForm({ ...agentForm, name: e.target.value })} placeholder="Accessibility QA Agent" required /></label><label>Scope<input value={agentForm.scope} onChange={(e) => setAgentForm({ ...agentForm, scope: e.target.value })} placeholder="qa" /></label><label>Strategy<textarea value={agentForm.strategy} onChange={(e) => setAgentForm({ ...agentForm, strategy: e.target.value })} rows="3" placeholder="How this agent should plan and execute work" /></label><label>Tools<input value={agentForm.tools} onChange={(e) => setAgentForm({ ...agentForm, tools: e.target.value })} placeholder="dom.extract, mcp.registry.describe" /></label><button className="primary"><Bot size={16} /> Add agent</button></form></section><section className="card"><h2><Bot size={20} /> Specialized agents</h2>{agents.map((agent) => <article className="timeline-item" key={agent.id}><b>{agent.name}</b><p>{agent.strategy}</p><span>Scope: {agent.scope} · Tools: {agent.tools.join(', ')}</span></article>)}</section><section className="card wide"><h2><Database size={20} /> MCP-compatible tool registry</h2>{tools.map((tool) => <article className="timeline-item" key={tool.name}><b>{tool.name}</b><p>{tool.description}</p><span>{tool.permissions.join(', ')}</span></article>)}</section></div>;
 }
 
 function SettingsPanel() {
@@ -180,13 +232,19 @@ function SettingsPanel() {
 }
 
 function VersionPanel({ versions }) {
-  return <section className="card"><h2><Brain size={20} /> Versioned memory states</h2>{versions.map((version) => <article className="timeline-item version" key={version.id}><b>{version.id}</b><p>{version.summary}</p><span>{version.nodeCount} nodes · {version.edgeCount} edges · confidence {Math.round(version.confidence * 100)}% · parent {version.parentId || 'root'}</span></article>)}</section>;
+  return <section className="card"><h2><Brain size={20} /> Versioned memory states</h2>{versions.length ? versions.map((version) => <article className="timeline-item version" key={version.id}><b>{version.id}</b><p>{version.summary}</p><span>{version.nodeCount} nodes · {version.edgeCount} edges · confidence {Math.round(version.confidence * 100)}% · parent {version.parentId || 'root'}</span></article>) : <p>No memory versions yet.</p>}</section>;
 }
 
 function LogPanel({ logs }) {
   return <section className="card log-panel"><h2>Audit trail</h2>{logs.slice(0, 18).map((log) => <article key={log.id}><span>{log.category}</span><p>{log.message}</p><time>{new Date(log.timestamp).toLocaleTimeString()}</time></article>)}</section>;
 }
-function TabBar({ tabs, active, onChange }) { return <div className="sub-tabs">{tabs.map((tab) => <button className={active === tab ? 'active' : ''} onClick={() => onChange(tab)} key={tab}>{tab}</button>)}</div>; }
-function Empty({ title, body }) { return <section className="card"><h2>{title}</h2><p>{body}</p></section>; }
+
+function TabBar({ tabs, active, onChange }) {
+  return <div className="sub-tabs">{tabs.map((tab) => <button type="button" className={active === tab ? 'active' : ''} onClick={() => onChange(tab)} key={tab}>{tab}</button>)}</div>;
+}
+
+function Empty({ title, body }) {
+  return <section className="empty-state"><h2>{title}</h2><p>{body}</p></section>;
+}
 
 createRoot(document.getElementById('root')).render(<App />);

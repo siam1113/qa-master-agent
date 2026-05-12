@@ -36,9 +36,19 @@ const enhanced = graph.enhanceKnowledge({
   title: 'Profile onboarding',
   content: 'Profile editing requires avatar upload, display name validation, and save confirmation.',
   imageAlt: 'Profile page with avatar upload and save button.',
+  imageSrc: 'data:image/png;base64,BBBB',
   businessRule: 'Display names must be unique and less than 40 characters.'
 });
 assert.ok(enhanced.nodes.some((node) => node.label === 'Profile onboarding'), 'enhance should add the new document node');
+assert.ok(enhanced.nodes.some((node) => node.type === 'Screen' && node.src === 'data:image/png;base64,BBBB'), 'enhance should ingest pasted image data URLs');
 assert.ok(enhanced.memoryVersions[0].reason === 'ingestion', 'enhance should version memory');
+
+const addedAgent = agentRegistry.add({ name: 'Accessibility QA Agent', scope: 'a11y', strategy: 'screen-reader first validation', tools: ['dom.extract'] });
+assert.equal(agentRegistry.get(addedAgent.id).name, 'Accessibility QA Agent', 'users should be able to add custom agents');
+
+const cleared = graph.deleteMemory();
+assert.equal(cleared.nodes.length, 0, 'delete memory should clear graph nodes');
+assert.equal(cleared.memoryVersions.length, 0, 'delete memory should clear memory versions');
+assert.equal(cleared.sessions.length, 0, 'delete memory should clear execution sessions');
 
 console.log('KnowledgeGraphService production smoke test passed.');

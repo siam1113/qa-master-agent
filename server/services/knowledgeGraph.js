@@ -124,12 +124,26 @@ export class KnowledgeGraphService {
     return this.getState();
   }
 
-  enhanceKnowledge({ title, content, imageAlt, businessRule }) {
+  enhanceKnowledge({ title, content, imageAlt, imageSrc, businessRule }) {
     const features = this.extractFeatures(content);
     this.ingestDocument({ title, content, features }, { sourceType: 'document' });
-    if (imageAlt?.trim()) this.ingestImage({ title: `${title} UI note`, alt: imageAlt, features });
+    if (imageAlt?.trim() || imageSrc?.trim()) this.ingestImage({ title: `${title} UI note`, alt: imageAlt || 'Pasted UI capture', src: imageSrc, features });
     if (businessRule?.trim()) this.ingestRule({ name: `${title} rule`, description: businessRule, validations: this.extractFeatures(businessRule), confidence: 0.66 });
     this.log('enhance', `Enhance pipeline parsed "${title}", generated embeddings, and refreshed graph lineage.`);
+    return this.getState();
+  }
+
+  deleteMemory() {
+    this.nodes.clear();
+    this.edges = [];
+    this.memoryInsights = [];
+    this.memoryVersions = [];
+    this.logs = [];
+    this.sessions.clear();
+    this.executionHistory = [];
+    this.seeded = false;
+    this.log('memory.delete', 'All graph memory, insights, versions, and execution sessions were deleted by the user.');
+    this.persistSoon();
     return this.getState();
   }
 

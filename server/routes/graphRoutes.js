@@ -15,9 +15,9 @@ export function createGraphRouter({ executionEngine } = {}) {
   });
 
   graphRouter.post('/enhance', (request, response) => {
-    const { title, content, imageAlt, businessRule } = request.body;
+    const { title, content, imageAlt, imageSrc, businessRule } = request.body;
     if (!title?.trim() || !content?.trim()) return response.status(400).json({ error: 'Title and content are required.' });
-    response.json(withRegistries(knowledgeGraph.enhanceKnowledge({ title, content, imageAlt, businessRule })));
+    response.json(withRegistries(knowledgeGraph.enhanceKnowledge({ title, content, imageAlt, imageSrc, businessRule })));
   });
 
   graphRouter.post('/act', async (request, response, next) => {
@@ -42,8 +42,20 @@ export function createGraphRouter({ executionEngine } = {}) {
     }
   });
 
+  graphRouter.delete('/memory', (_request, response) => {
+    response.json(withRegistries(knowledgeGraph.deleteMemory()));
+  });
+
   graphRouter.get('/sessions', (_request, response) => response.json(knowledgeGraph.getState().sessions));
   graphRouter.get('/agents', (_request, response) => response.json(agentRegistry.list()));
+  graphRouter.post('/agents', (request, response) => {
+    try {
+      const agent = agentRegistry.add(request.body);
+      response.status(201).json({ agent, state: withRegistries() });
+    } catch (error) {
+      response.status(400).json({ error: error.message });
+    }
+  });
   graphRouter.get('/tools', (_request, response) => response.json({ tools: toolRegistry.list('*'), audit: toolRegistry.audit }));
 
   return graphRouter;
