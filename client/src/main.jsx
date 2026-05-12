@@ -196,9 +196,38 @@ function GraphTab({ state }) {
   useEffect(() => {
     if (!selectedNode && featured.length) setSelectedNode(featured[0]);
   }, [featured, selectedNode]);
+  const graphLayout = useMemo(() => buildMindmapGraphLayout(featured), [featured]);
   const selectedEdges = selectedNode ? state.edges.filter((edge) => edge.source === selectedNode.id || edge.target === selectedNode.id) : [];
   const selectedMindmap = selectedNode?.mindmap;
-  return <div className="grid two"><section className="card wide"><div className="section-heading"><h2><Network size={20} /> Interactive knowledge graph</h2><div className="zoom-controls"><button type="button" onClick={() => setZoom(Math.max(.65, zoom - .15))}>−</button><span>{Math.round(zoom * 100)}%</span><button type="button" onClick={() => setZoom(Math.min(1.8, zoom + .15))}>+</button></div></div><div className="graph-canvas zoomable"><div className="graph-surface" style={{ transform: `scale(${zoom})` }}>{featured.map((node, index) => <button type="button" className={`node node-${node.type.toLowerCase()} ${selectedNode?.id === node.id ? 'selected' : ''}`} style={{ '--i': index }} key={node.id} onClick={() => setSelectedNode(node)}><strong>{node.label}</strong><span>{node.type} · {Math.round((node.confidence || .7) * 100)}%</span></button>)}</div></div></section><section className="card node-detail"><h2>Selected knowledge node</h2>{selectedNode ? <><span>{selectedNode.type}</span><h3>{selectedNode.label}</h3><p>{selectedNode.content || 'No details captured yet.'}</p><small>ID: {selectedNode.id}</small>{selectedMindmap && <Mindmap node={selectedMindmap} />}<h4>Relationships</h4><div className="edge-list compact">{selectedEdges.length ? selectedEdges.map((edge) => <p key={edge.id}>{edge.source} <b>{edge.relationship}</b> {edge.target}</p>) : <p>No direct relationships.</p>}</div></> : <Empty title="No node selected" body="Click a graph node to inspect its memory details." />}</section><section className="card wide image-grid">{state.nodes.filter((node) => node.type === 'Screen' && node.src).map((image) => <figure key={image.id}><img src={image.src} alt={image.content} /><figcaption>{image.label}</figcaption></figure>)}</section></div>;
+  const visibleNodeIds = new Set(featured.map((node) => node.id));
+  const visibleEdges = state.edges.filter((edge) => visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target));
+  return <div className="grid two"><section className="card wide"><div className="section-heading"><h2><Network size={20} /> Interactive knowledge graph</h2><div className="zoom-controls"><button type="button" onClick={() => setZoom(Math.max(.65, zoom - .15))}>−</button><span>{Math.round(zoom * 100)}%</span><button type="button" onClick={() => setZoom(Math.min(1.8, zoom + .15))}>+</button></div></div><div className="graph-canvas zoomable"><div className="graph-surface mindmap-surface" style={{ transform: `scale(${zoom})` }}><svg className="graph-links" viewBox="0 0 1180 780" aria-hidden="true">{visibleEdges.map((edge) => { const source = graphLayout.get(edge.source); const target = graphLayout.get(edge.target); if (!source || !target) return null; return <line key={edge.id} className="graph-edge" x1={source.x + 92} y1={source.y + 38} x2={target.x + 92} y2={target.y + 38} />; })}</svg>{featured.map((node, index) => { const position = graphLayout.get(node.id) || { x: 60, y: 60 }; return <button type="button" className={`node node-${node.type.toLowerCase()} ${selectedNode?.id === node.id ? 'selected' : ''}`} style={{ '--i': index, left: `${position.x}px`, top: `${position.y}px` }} key={node.id} onClick={() => setSelectedNode(node)}><strong>{node.label}</strong><span>{node.type} · {Math.round((node.confidence || .7) * 100)}%</span></button>; })}</div></div></section><section className="card node-detail"><h2>Selected knowledge node</h2>{selectedNode ? <><span>{selectedNode.type}</span><h3>{selectedNode.label}</h3><p>{selectedNode.content || 'No details captured yet.'}</p><small>ID: {selectedNode.id}</small>{selectedMindmap && <Mindmap node={selectedMindmap} />}<h4>Relationships</h4><div className="edge-list compact">{selectedEdges.length ? selectedEdges.map((edge) => <p key={edge.id}>{edge.source} <b>{edge.relationship}</b> {edge.target}</p>) : <p>No direct relationships.</p>}</div></> : <Empty title="No node selected" body="Click a graph node to inspect its memory details." />}</section><section className="card wide image-grid">{state.nodes.filter((node) => node.type === 'Screen' && node.src).map((image) => <figure key={image.id}><img src={image.src} alt={image.content} /><figcaption>{image.label}</figcaption></figure>)}</section></div>;
+}
+
+function buildMindmapGraphLayout(nodes) {
+  const layout = new Map();
+  const center = { x: 498, y: 342 };
+  if (!nodes.length) return layout;
+  layout.set(nodes[0].id, center);
+  const rings = [
+    { radiusX: 295, radiusY: 176, capacity: 10 },
+    { radiusX: 470, radiusY: 286, capacity: 16 },
+    { radiusX: 545, radiusY: 350, capacity: 24 }
+  ];
+  let cursor = 1;
+  for (const ring of rings) {
+    const remaining = nodes.length - cursor;
+    if (remaining <= 0) break;
+    const count = Math.min(ring.capacity, remaining);
+    for (let index = 0; index < count; index += 1) {
+      const angle = (-Math.PI / 2) + (index / count) * Math.PI * 2 + (cursor % 2 ? .12 : 0);
+      const x = Math.round(center.x + Math.cos(angle) * ring.radiusX);
+      const y = Math.round(center.y + Math.sin(angle) * ring.radiusY);
+      layout.set(nodes[cursor].id, { x: Math.max(24, Math.min(970, x)), y: Math.max(22, Math.min(680, y)) });
+      cursor += 1;
+    }
+  }
+  return layout;
 }
 
 function Mindmap({ node }) {
@@ -239,7 +268,23 @@ function Actions(props) {
 function ActTab({ command, setCommand, targetUrl, setTargetUrl, agents, selectedAgent, setSelectedAgent, onRun, lastAction, liveFrame, logs, stream }) {
   const frame = liveFrame || lastAction?.session?.screenshots?.[0];
   const activeSession = stream.find((event) => event.sessionId)?.sessionId;
-  return <div className="execution-layout"><section className="card console"><h2><Play size={20} /> Operational execution console</h2><form onSubmit={onRun} className="stack"><label>High-level QA command<textarea value={command} onChange={(e) => setCommand(e.target.value)} rows="3" required /></label><label>Target application URL<input value={targetUrl} onChange={(e) => setTargetUrl(e.target.value)} placeholder="https://app.example.com" /></label><label>Agent<select value={selectedAgent} onChange={(e) => setSelectedAgent(e.target.value)} disabled={!agents.length}>{agents.length ? agents.map((agent) => <option value={agent.id} key={agent.id}>{agent.name}</option>) : <option>Loading agents…</option>}</select></label><button className="primary"><Zap size={16} /> Execute with live stream</button></form><h3>Live execution logs</h3><div className="terminal">{stream.map((event, index) => <p key={index}><b>{event.type}</b> {event.frame?.label || event.log?.message || event.message || event.session?.status || event.sessionId}</p>)}</div><LogPanel logs={logs} /></section><section className="card viewer"><div className="section-heading"><h2>Live UI execution viewer</h2>{activeSession && <span className="live-pill"><span className="pulse" /> {frame ? 'Streaming frames' : 'Waiting for frame'}</span>}</div>{frame?.src ? <div className="browser-frame live"><div className="browser-bar"><span /><span /><span /><small>{frame.url || frame.label}</small></div><img src={frame.src} alt={frame.label || 'Latest live execution frame'} /><div className="highlight">{frame.stepLabel || 'Live frame'}</div></div> : <Empty title="No live browser frame yet" body="When the agent navigates or acts, screenshots stream here immediately instead of waiting for the final captured image." />}{lastAction && <pre>{lastAction.result}</pre>}</section></div>;
+  return <div className="execution-layout"><section className="card console"><h2><Play size={20} /> Operational execution console</h2><form onSubmit={onRun} className="stack"><label>High-level QA command<textarea value={command} onChange={(e) => setCommand(e.target.value)} rows="3" required /></label><label>Target application URL<input value={targetUrl} onChange={(e) => setTargetUrl(e.target.value)} placeholder="https://app.example.com" /></label><label>Agent<select value={selectedAgent} onChange={(e) => setSelectedAgent(e.target.value)} disabled={!agents.length}>{agents.length ? agents.map((agent) => <option value={agent.id} key={agent.id}>{agent.name}</option>) : <option>Loading agents…</option>}</select></label><button className="primary"><Zap size={16} /> Execute with live stream</button></form><h3>Live execution logs</h3><div className="terminal">{stream.map((event, index) => <p key={index}><b>{event.type}</b> {event.frame?.label || event.log?.message || event.message || event.session?.status || event.sessionId}</p>)}</div><LogPanel logs={logs} /></section><section className="card viewer"><div className="section-heading"><h2>Live UI execution viewer</h2>{activeSession && <span className="live-pill"><span className="pulse" /> {frame ? 'Streaming frames' : 'Waiting for frame'}</span>}</div>{frame?.src ? <div className="browser-frame live"><div className="browser-bar"><span /><span /><span /><small>{frame.url || frame.label}</small></div><img src={frame.src} alt={frame.label || 'Latest live execution frame'} /><div className="highlight">{frame.stepLabel || 'Live frame'}</div></div> : <Empty title="No live browser frame yet" body="When the agent navigates or acts, screenshots stream here immediately instead of waiting for the final captured image." />}{lastAction && <pre>{lastAction.result}</pre>}</section>{lastAction && <ActionReport action={lastAction} />}</div>;
+}
+
+function ActionReport({ action }) {
+  const session = action.session || {};
+  const logs = session.logs || [];
+  const steps = logs.filter((log) => ['plan', 'browser', 'perception', 'failure', 'configuration', 'mcp', 'reasoning'].includes(log.category));
+  const completedSteps = steps.filter((step) => stepStatus(step, session) !== 'Issue').length;
+  const generatedAt = session.updatedAt || new Date().toISOString();
+  return <section className="card action-report"><div className="section-heading"><div><p className="eyebrow">Execution report</p><h2><Activity size={20} /> Detailed run summary</h2></div><span className={`report-status ${session.failures?.length ? 'warning' : 'success'}`}>{session.status || 'completed'}</span></div><div className="report-summary"><article><b>{steps.length}</b><span>steps logged</span></article><article><b>{completedSteps}</b><span>completed / observed</span></article><article><b>{session.screenshots?.length || 0}</b><span>screenshots</span></article><article><b>{session.domSnapshots?.length || 0}</b><span>DOM snapshots</span></article><article><b>{session.failures?.length || 0}</b><span>findings</span></article></div><div className="report-meta"><p><b>Command:</b> {session.command}</p><p><b>Agent:</b> {session.agent}</p><p><b>Target:</b> {session.targetUrl || 'Not configured'}</p><p><b>Completed:</b> {new Date(generatedAt).toLocaleString()}</p></div><h3>Steps performed and status</h3><ol className="report-steps">{steps.length ? steps.map((step, index) => <li key={step.id || index} className={`report-step ${stepStatus(step, session).toLowerCase()}`}><span className="step-index">{index + 1}</span><div><div className="step-title"><b>{step.category}</b><span>{stepStatus(step, session)}</span></div><p>{step.message}</p>{step.metadata?.performedActions?.length ? <small>Actions: {step.metadata.performedActions.map((item) => item.message).join(' · ')}</small> : null}</div></li>) : <li className="report-step"><span className="step-index">1</span><div><div className="step-title"><b>No execution steps captured</b><span>Pending</span></div><p>Run an action to populate the final execution report.</p></div></li>}</ol>{Boolean(session.failures?.length) && <div className="finding-list"><h3>Findings / failures</h3>{session.failures.map((failure, index) => <p key={`${failure}-${index}`}>{failure}</p>)}</div>}</section>;
+}
+
+function stepStatus(step, session) {
+  if (step.category === 'failure' || /failed|blocked|missing|no_safe/i.test(step.message)) return 'Issue';
+  if (session.failures?.some((failure) => step.message.includes(failure))) return 'Issue';
+  if (step.category === 'plan') return 'Planned';
+  return 'Done';
 }
 
 function ChatTab({ chatQuery, setChatQuery, sendChat, chatHistory, logs, chatLoading }) {
